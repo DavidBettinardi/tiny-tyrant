@@ -1577,6 +1577,7 @@ button { font-family: var(--font-body); color: var(--text); }
         def = TT.defs.traps[tool.id];
         game.spend(state, chk.cost, 'trap');
         obj = { uid: TT.uid(), kind: 'trap', id: def.id, x: x, y: y, armed: true, cd: 0, uses: 0, disabled: false, triggers: 0, paid: chk.cost, data: {} };
+        if (tool.rot != null) obj.dir = tool.rot;
         state.traps.push(obj);
         if (def.onPlace) TT.safeCall(def.id + '.onPlace', def.onPlace, def, [state, obj]);
         break;
@@ -4517,6 +4518,254 @@ button { font-family: var(--font-body); color: var(--text); }
     onTrigger: function (ctx) {
       for (var i = 0; i < 4; i++) ctx.spawnMinion('broodling', ctx.x, ctx.y, {});
       ctx.fx('summon', { radius: 1 });
+    }
+  });
+})(window.TT);
+
+</script>
+<script>/* src/content/aimed.js */
+/*
+ * Tiny Tyrant — src/content/aimed.js
+ * Headless-safe. Deterministic.
+ *
+ * Aimed traps strike a fixed shape of tiles instead of whoever is standing on them. A shape is rotated when
+ * placed, stopped by walls unless it says otherwise, and has sweet tiles where it hits at full strength. So the
+ * tunnels have to be dug to suit the trap: a spear needs three straight tiles, a diagonal needs a staircase or a
+ * room, a pair of side blades needs a crossroads.
+ *
+ * def.aim: {cells: [[dx, dy, weight]], free, fixed, lay: {s, t}, touch: element, hit(ctx, hero, weight)}
+ *   cells face north (dy < 0). weight 1 is a sweet tile; lower weights hit for that fraction.
+ *   free: ignores walls. fixed: the same every way round, so it never rotates.
+ * trap.dir: 0 north, 1 east, 2 south, 3 west.
+ *
+ * TT.aim API:
+ *   isAimed(def), tiles(state, def, x, y, dir) -> [{x, y, w, ok}]
+ *   route(state) -> {'x,y': true}, score(state, tiles) -> 0..1 how much of the shape's strength lies on the route
+ *   bestDir(state, def, x, y), stars(score) -> 0..3, rotate(state, trap, by)
+ */
+(function (TT) {
+  'use strict';
+  var G = TT.grid, CB = TT.combat;
+  var A = TT.aim = {};
+  var routeCache = { rev: -1, route: null };
+
+  function key(x, y) { return x + ',' + y; }
+  function turn(c, dir) {
+    var x = c[0], y = c[1];
+    for (var i = 0; i < dir; i++) { var t = x; x = -y; y = t; }
+    return [x, y, c[2] == null ? 1 : c[2]];
+  }
+  A.isAimed = function (def) { return !!(def && def.aim); };
+  A.tiles = function (state, def, x, y, dir) {
+    var g = state.grid, blocked = state.raid ? state.raid.blocked : {};
+    return def.aim.cells.map(function (c0) {
+      var c = turn(c0, def.aim.fixed ? 0 : dir || 0), tx = x + c[0], ty = y + c[1];
+      var ok = G.inBounds(g, tx, ty) && G.isWalkable(g, tx, ty) && !blocked[key(tx, ty)] &&
+        (def.aim.free || TT.path.lineOfSight(g, x, y, tx, ty));
+      return { x: tx, y: ty, w: c[2], ok: ok };
+    });
+  };
+  A.route = function (state) {
+    var g = state.grid;
+    if (routeCache.rev === g.rev && routeCache.grid === g) return routeCache.route;
+    var p = TT.path.find(g, g.entrance.x, g.entrance.y, g.treasure.x, g.treasure.y, {
+      cost: function (x, y) { return G.isWalkable(g, x, y) ? 1 : Infinity; }
+    }) || [], out = {};
+    p.forEach(function (t) { out[key(t.x, t.y)] = true; });
+    routeCache = { rev: g.rev, grid: g, route: out };
+    return out;
+  };
+  A.score = function (state, tiles) {
+    var r = A.route(state), have = 0, all = 0;
+    tiles.forEach(function (t) {
+      all += t.w;
+      if (t.ok && r[key(t.x, t.y)]) have += t.w;
+    });
+    return all ? have / all : 0;
+  };
+  A.bestDir = function (state, def, x, y) {
+    if (def.aim.fixed) return 0;
+    var best = 0, bs = -1;
+    for (var d = 0; d < 4; d++) {
+      var tiles = A.tiles(state, def, x, y, d), s = A.score(state, tiles);
+      // no route in reach: at least face the most open floor
+      tiles.forEach(function (t) { if (t.ok) s += 0.001 * t.w; });
+      if (s > bs) { bs = s; best = d; }
+    }
+    return best;
+  };
+  A.stars = function (score) { return score >= 0.6 ? 3 : score >= 0.3 ? 2 : score > 0 ? 1 : 0; };
+  A.rotate = function (state, trap, by) {
+    var def = TT.defs.traps[trap.id];
+    if (!A.isAimed(def) || def.aim.fixed) return false;
+    trap.dir = ((trap.dir || 0) + (by || 1) + 4) % 4;
+    TT.events.emit('trapRotated', { trap: trap, state: state });
+    return true;
+  };
+
+  /* ---------------------------------------------------------------- the strike */
+  function shape(ctx) {
+    var trap = ctx.trap, r = trap.data.r || (trap.data.r = {}), rev = ctx.grid.rev;
+    if (r.rev !== rev || r.dir !== trap.dir) {
+      r.rev = rev; r.dir = trap.dir;
+      r.tiles = A.tiles(ctx.state, ctx.def, trap.x, trap.y, trap.dir).filter(function (t) { return t.ok; });
+      r.top = r.tiles.reduce(function (m, t) { return Math.max(m, t.w); }, 0);
+    }
+    return r;
+  }
+  function onTick(ctx) {
+    var trap = ctx.trap;
+    if (!trap.armed || trap.disabled || trap.cd > 0) return;
+    var r = shape(ctx), sweet = {};
+    if (!r.tiles.length) return;
+    // it fires when someone reaches the strongest tile it can actually reach
+    r.tiles.forEach(function (t) { if (t.w >= r.top) sweet[key(t.x, t.y)] = 1; });
+    var hs = ctx.raid.heroes;
+    for (var i = 0; i < hs.length; i++) {
+      var h = hs[i];
+      if (TT.isActive(h) && !h.data.flying && sweet[key(h.tx, h.ty)]) { TT.game.triggerTrap(ctx.state, trap, h); return; }
+    }
+  }
+  function onTrigger(ctx) {
+    var def = ctx.def, aim = def.aim, trap = ctx.trap, r = shape(ctx), at = {};
+    r.flashT = ctx.raid.t;
+    r.tiles.forEach(function (t) { at[key(t.x, t.y)] = t.w; });
+    var by = { id: trap.id, uid: trap.uid, name: def.name, x: trap.x, y: trap.y };
+    ctx.raid.heroes.slice().forEach(function (h) {
+      if (!TT.isActive(h) || h.data.flying) return;
+      var w = at[key(h.tx, h.ty)];
+      if (!w) return;
+      if (def.dmg) ctx.damage(h, def.dmg * w);
+      if (TT.isActive(h) && aim.hit) aim.hit(ctx, h, w);
+    });
+    if (TT.elements) r.tiles.forEach(function (t) {
+      if (aim.touch) TT.elements.touch(ctx.state, t.x, t.y, aim.touch, by);
+      if (aim.lay) TT.elements.lay(ctx.state, t.x, t.y, aim.lay.s, aim.lay.t, by);
+    });
+  }
+  function reg(def) {
+    def.aimed = true;
+    def.category = 'aimed';
+    def.trigger = 'timed';
+    def.tags = (def.tags || []).concat(['aimed']);
+    def.detectMul = def.detectMul || 1.1;
+    def.disarmMul = def.disarmMul || 0.8;
+    def.disarmTime = def.disarmTime || 2.5;
+    def.counters = def.counters || ['rogue', 'artificer'];
+    def.onTick = onTick;
+    def.onTrigger = onTrigger;
+    def.onRaidStart = function (ctx) {
+      ctx.state.traps.forEach(function (t) { if (t.id === def.id) { t.data = t.data || {}; t.data.r = {}; } });
+    };
+    // a trap placed without an aim faces the route
+    def.onPlace = function (state, trap) { if (trap.dir == null) trap.dir = A.bestDir(state, def, trap.x, trap.y); };
+    TT.registerTrap(def);
+  }
+  function line(from, to, w) {
+    var out = [];
+    for (var i = from; i <= to; i++) out.push([0, -i, w == null ? 1 : w]);
+    return out;
+  }
+
+  /* ---------------------------------------------------------------- straight ahead */
+  reg({
+    id: 'spear_thrust', name: 'Spear Thrust', blurb: 'Best at the tip, 3 tiles out. Weak up close.',
+    desc: 'A long iron spear on a spring, set into the wall.',
+    cost: { gold: 50, souls: 0 }, damageType: 'physical', placement: 'wall', dmg: 46, cooldown: 3,
+    aim: { cells: [[0, -1, 0.3], [0, -2, 0.6], [0, -3, 1]] }
+  });
+  reg({
+    id: 'harpoon', name: 'Harpoon', blurb: 'One huge hit, exactly 2 tiles out. Holds them there.',
+    desc: 'A barbed bolt that only knows one distance.',
+    cost: { gold: 60, souls: 0 }, damageType: 'physical', placement: 'wall', dmg: 78, cooldown: 5,
+    aim: {
+      cells: [[0, -2, 1]],
+      hit: function (ctx, h) { ctx.status(h, 'web', { duration: 1.2 }); }
+    }
+  });
+  reg({
+    id: 'storm_rail', name: 'Storm Rail', blurb: 'Lightning down 6 straight tiles. Shocks any pool it crosses.',
+    desc: 'Two copper rails and a very long corridor.',
+    cost: { gold: 85, souls: 0 }, damageType: 'lightning', placement: 'wall', dmg: 22, cooldown: 5,
+    aim: {
+      cells: line(1, 6), touch: 'storm',
+      hit: function (ctx, h) { ctx.status(h, 'stun', { duration: 0.35 }); }
+    }
+  });
+  reg({
+    id: 'oil_jet', name: 'Oil Jet', blurb: 'Sprays oil down 4 straight tiles. No damage.',
+    desc: 'A brass nozzle and a barrel behind the wall.',
+    cost: { gold: 45, souls: 0 }, damageType: 'fire', placement: 'wall', noDamage: true, cooldown: 7,
+    aim: { cells: line(1, 4), lay: { s: 'oil', t: 18 } }
+  });
+  reg({
+    id: 'spillway', name: 'Spillway', blurb: 'Floods 5 straight tiles. No damage.',
+    desc: 'A stone gutter with a sluice at the end.',
+    cost: { gold: 40, souls: 0 }, damageType: 'frost', placement: 'wall', noDamage: true, cooldown: 8,
+    aim: { cells: line(1, 5), lay: { s: 'water', t: 14 } }
+  });
+
+  /* ---------------------------------------------------------------- wide */
+  reg({
+    id: 'flame_fan', name: 'Flame Fan', blurb: 'A cone of fire. Best at the wide far end.',
+    desc: 'A bellows and a slit, breathing outward.',
+    cost: { gold: 75, souls: 0 }, damageType: 'fire', placement: 'wall', dmg: 26, cooldown: 5,
+    aim: {
+      cells: [[0, -1, 0.4], [-1, -2, 0.7], [0, -2, 0.7], [1, -2, 0.7], [-1, -3, 1], [0, -3, 1], [1, -3, 1]], touch: 'fire',
+      hit: function (ctx, h) { ctx.status(h, 'burn', { dps: 4, duration: 3, damageType: 'fire' }); }
+    }
+  });
+  reg({
+    id: 'scythe_row', name: 'Scythe Row', blurb: 'Cuts a 3-wide row, 2 tiles out. Made for rooms.',
+    desc: 'Three blades on one axle, swinging together.',
+    cost: { gold: 65, souls: 0 }, damageType: 'physical', placement: 'wall', dmg: 40, cooldown: 4,
+    aim: { cells: [[-1, -2, 1], [0, -2, 1], [1, -2, 1]], lay: { s: 'blood', t: 16 } }
+  });
+
+  /* ---------------------------------------------------------------- slanted */
+  reg({
+    id: 'slant_bolt', name: 'Slant Bolt', blurb: 'Pierces 4 tiles diagonally. Loves staircase tunnels.',
+    desc: 'A crossbow bolted to the floor at an odd angle.',
+    cost: { gold: 60, souls: 0 }, damageType: 'physical', dmg: 32, cooldown: 3.5,
+    aim: { cells: [[1, -1, 1], [2, -2, 1], [3, -3, 1], [4, -4, 1]] }
+  });
+  reg({
+    id: 'frost_fork', name: 'Frost Fork', blurb: 'Two frost beams, forward left and forward right.',
+    desc: 'A forked rune, always pointing away from itself.',
+    cost: { gold: 55, souls: 0 }, damageType: 'frost', dmg: 20, cooldown: 4,
+    aim: {
+      cells: [[-1, -1, 1], [-2, -2, 1], [1, -1, 1], [2, -2, 1]], touch: 'frost',
+      hit: function (ctx, h) { ctx.status(h, 'slow', { duration: 2.5, magnitude: 0.5 }); }
+    }
+  });
+  reg({
+    id: 'cross_blades', name: 'Cross Blades', blurb: 'An X of blades, 2 tiles each way. Needs open floor.',
+    desc: 'Four blades that fold out at the corners.',
+    cost: { gold: 70, souls: 0 }, damageType: 'physical', dmg: 36, cooldown: 3.5,
+    aim: { fixed: true, cells: [[-1, -1, 1], [-2, -2, 1], [1, -1, 1], [2, -2, 1], [-1, 1, 1], [-2, 2, 1], [1, 1, 1], [2, 2, 1]] }
+  });
+
+  /* ---------------------------------------------------------------- odd */
+  reg({
+    id: 'flank_scythes', name: 'Flank Scythes', blurb: 'Hits 2 tiles left and right, nothing ahead. Put it at a crossroads.',
+    desc: 'Blades that only care about what passes beside them.',
+    cost: { gold: 70, souls: 0 }, damageType: 'physical', dmg: 44, cooldown: 3.5,
+    aim: { cells: [[-1, 0, 0.6], [-2, 0, 1], [1, 0, 0.6], [2, 0, 1]] }
+  });
+  reg({
+    id: 'hex_hop', name: 'Hex Hop', blurb: 'Strikes in L-shapes, like a chess knight. Goes through walls.',
+    desc: 'A curse that travels the way a knight does.',
+    cost: { gold: 85, souls: 1 }, damageType: 'shadow', dmg: 44, cooldown: 4,
+    aim: { fixed: true, free: true, cells: [[1, -2], [2, -1], [2, 1], [1, 2], [-1, 2], [-2, 1], [-2, -1], [-1, -2]].map(function (c) { return [c[0], c[1], 1]; }) }
+  });
+  reg({
+    id: 'shock_ring', name: 'Shock Ring', blurb: 'A ring 2 tiles out stuns everyone. The centre is safe.',
+    desc: 'A drum that throws its noise to exactly one distance.',
+    cost: { gold: 80, souls: 0 }, damageType: 'physical', dmg: 22, cooldown: 6,
+    aim: {
+      fixed: true, touch: 'sound',
+      cells: [[0, -2], [1, -1], [2, 0], [1, 1], [0, 2], [-1, 1], [-2, 0], [-1, -1]].map(function (c) { return [c[0], c[1], 1]; }),
+      hit: function (ctx, h) { ctx.status(h, 'stun', { duration: 0.8 }); }
     }
   });
 })(window.TT);
@@ -12108,7 +12357,11 @@ button { font-family: var(--font-body); color: var(--text); }
     crown_spikes: { lay: 'blood', r: 0, t: 18 },
     web_snare: { lay: 'web', r: 1.8, t: 14 },
     venom_drip: { lay: 'toxic', r: 1, t: 7, at: 'victim' },
-    barricade: { tok: ['wood'] }
+    barricade: { tok: ['wood'] },
+    oil_jet: { tok: ['oil'] },
+    spillway: { tok: ['water'] },
+    scythe_row: { tok: ['blood'] },
+    shock_ring: { tok: ['sound'] }
   };
 
   /* What the player is told. a and b are icons; order does not matter. */
@@ -12824,14 +13077,15 @@ button { font-family: var(--font-body); color: var(--text); }
   'use strict';
   var H = TT.hooks;
   var B = TT.trapbook = TT.trapbook || {};
-  B.STARTERS = ['spike_pit', 'flame_vent', 'alarm_bell', 'arrow_slit', 'poison_gas'];
+  B.STARTERS = ['spike_pit', 'flame_vent', 'alarm_bell', 'arrow_slit', 'poison_gas', 'spear_thrust'];
   var OFFER_SIZE = 3, MAX_LEVEL = 2, UP = 'up:', RELIC = 'relic:';
   var NO_UPGRADE = { alarm_bell: 1, gilded_idol: 1, toll_gate: 1, barricade: 1 };  // nothing to strengthen
 
   B.CATEGORIES = [
     { id: 'floor', name: 'Floor' },
     { id: 'wall', name: 'Wall' },
-    { id: 'area', name: 'Area' }
+    { id: 'area', name: 'Area' },
+    { id: 'aimed', name: 'Aimed' }
   ];
   B.BLURBS = {
     spike_pit: 'Heavy damage to whoever steps on it.',
@@ -12926,6 +13180,13 @@ button { font-family: var(--font-body); color: var(--text); }
     TT.list('traps', function (d) { return d.boss === state.bossId && !b.known[d.id] && d.signature <= due; })
       .forEach(function (d) { if (out.length < size - 1) out.push(d.id); });
     var fresh = ups.length ? size - 1 : size;
+    // every night's choice has at least one aimed trap, while any are left to learn
+    var aimed = pool.filter(function (id) { return TT.defs.traps[id].aim; });
+    if (aimed.length && out.length < fresh) {
+      var ai = aimed[Math.floor(rnd() * aimed.length)];
+      pool.splice(pool.indexOf(ai), 1);
+      out.push(ai);
+    }
     while (out.length < fresh && pool.length) out.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
     while (out.length < size && ups.length) out.push(UP + ups.splice(Math.floor(rnd() * ups.length), 1)[0]);
     b.offer = out.length ? out : null;
@@ -12964,7 +13225,10 @@ button { font-family: var(--font-body); color: var(--text); }
   };
   B.autoPick = function (state) {
     var o = B.offer(state);
-    return o ? B.pick(state, o[0]) : false;
+    if (!o) return false;
+    // a script that cannot plan a corridor around a shape takes the plain trap when there is one
+    var plain = o.filter(function (id) { var d = TT.defs.traps[id]; return !(d && d.aim); });
+    return B.pick(state, plain.length ? plain[0] : o[0]);
   };
 
   TT.addFilter('newRun', function (state) { ensure(state); return state; }, 6);
@@ -16331,6 +16595,131 @@ button { font-family: var(--font-body); color: var(--text); }
 })(window.TT);
 
 </script>
+<script>/* src/render/art_aimed.js */
+/*
+ * Tiny Tyrant — src/render/art_aimed.js
+ * Aimed traps. Each sprite is a little map of its own shape, so the toolbar explains the trap at a glance.
+ * On the map: the footprint while placing, with the hero route picked out and a star score; a pointer on every
+ * placed trap; the strike flash in a raid.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined' || !TT.sprites) return;
+  var A = TT.aim, E = TT.elements, T = TT.TILE;
+  var COLOR = { physical: '#e8e0d0', fire: '#ff8a2a', frost: '#a8e4ff', lightning: '#f4ee50', shadow: '#b48bff', poison: '#8fd14f' };
+  var LAY_COLOR = { oil: '#c09a60', water: '#5fb4f0' };
+  function colorOf(def) { return (def.aim.lay && LAY_COLOR[def.aim.lay.s]) || COLOR[def.damageType] || '#e8e0d0'; }
+
+  /* ------------------------------------------------------------------ sprites */
+  TT.list('traps', A.isAimed).forEach(function (def) {
+    TT.sprites.register('trap_' + def.id, function (c, size, frame) {
+      c.save();
+      c.scale(size / 32, size / 32);
+      c.fillStyle = '#231d28'; c.fillRect(2, 2, 28, 28);
+      c.strokeStyle = 'rgba(0,0,0,.6)'; c.lineWidth = 1; c.strokeRect(2.5, 2.5, 27, 27);
+      var r = 0, col = colorOf(def);
+      def.aim.cells.forEach(function (k) { r = Math.max(r, Math.abs(k[0]), Math.abs(k[1])); });
+      var step = Math.min(5, 12.5 / Math.max(r, 1)), ox = 16, oy = 16, s = Math.max(2.4, step - 0.8);
+      if (!def.aim.fixed && def.aim.cells.every(function (k) { return k[1] <= 0; })) oy = 16 + r * step * 0.5 - 1;
+      var pulse = 0.72 + 0.28 * Math.sin((frame || 0) * Math.PI / 2);
+      def.aim.cells.forEach(function (k) {
+        c.globalAlpha = (0.35 + 0.65 * (k[2] == null ? 1 : k[2])) * pulse;
+        c.fillStyle = col;
+        c.fillRect(ox + k[0] * step - s / 2, oy + k[1] * step - s / 2, s, s);
+      });
+      c.globalAlpha = 1;
+      c.fillStyle = '#fff6e0';
+      c.beginPath(); c.arc(ox, oy, 1.7, 0, 6.283); c.fill();
+      c.restore();
+    }, { size: 32, frames: 4 });
+  });
+
+  /* ------------------------------------------------------------------ on the map */
+  function footprint(ctx, state, def, x, y, dir, t, strong) {
+    var tiles = A.tiles(state, def, x, y, dir), route = A.route(state), col = colorOf(def);
+    tiles.forEach(function (c) {
+      var px = c.x * T, py = c.y * T, on = c.ok && route[c.x + ',' + c.y];
+      if (!c.ok) {
+        if (!strong) return;
+        ctx.globalAlpha = 0.5; ctx.strokeStyle = '#d04a3a'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(px + 9, py + 9); ctx.lineTo(px + T - 9, py + T - 9); ctx.moveTo(px + T - 9, py + 9); ctx.lineTo(px + 9, py + T - 9); ctx.stroke();
+        return;
+      }
+      var base = strong ? 0.2 + 0.5 * c.w : 0.05 + 0.13 * c.w;
+      ctx.globalAlpha = base + (strong ? 0.08 * Math.sin(t * 5) : 0);
+      ctx.fillStyle = col;
+      ctx.fillRect(px + 2, py + 2, T - 4, T - 4);
+      if (on && strong) {
+        ctx.globalAlpha = 1; ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2;
+        ctx.strokeRect(px + 2, py + 2, T - 4, T - 4);
+      }
+    });
+    ctx.globalAlpha = 1;
+    return tiles;
+  }
+  function pointer(ctx, x, y, dir, col) {
+    var cx = (x + 0.5) * T, cy = (y + 0.5) * T, a = dir * Math.PI / 2;
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate(a);
+    ctx.fillStyle = col; ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, -T * 0.52); ctx.lineTo(5, -T * 0.32); ctx.lineTo(-5, -T * 0.32); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  function starsAt(ctx, x, y, n) {
+    var cx = (x + 0.5) * T, cy = y * T - 8;
+    ctx.fillStyle = 'rgba(8,5,10,0.85)'; ctx.fillRect(cx - 21, cy - 7, 42, 14);
+    for (var i = 0; i < 3; i++) {
+      var sx = cx - 13 + i * 13;
+      ctx.fillStyle = i < n ? '#ffd24a' : '#4a3e44';
+      ctx.beginPath();
+      for (var k = 0; k < 10; k++) {
+        var r = k % 2 ? 2.2 : 5, a = -Math.PI / 2 + k * Math.PI / 5;
+        ctx[k ? 'lineTo' : 'moveTo'](sx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  TT.render.addLayer('overlay', function (ctx, state, info) {
+    var t = info.t, hv = TT.render.hover, gh = TT.render.ghost;
+    if (state.phase === 'build') {
+      state.traps.forEach(function (tp) {
+        var def = TT.defs.traps[tp.id];
+        if (!A.isAimed(def)) return;
+        var hovered = hv && hv.x === tp.x && hv.y === tp.y && !(gh && gh.tool);
+        var tiles = footprint(ctx, state, def, tp.x, tp.y, tp.dir || 0, t, hovered);
+        if (!def.aim.fixed) pointer(ctx, tp.x, tp.y, tp.dir || 0, colorOf(def));
+        if (hovered) starsAt(ctx, tp.x, tp.y, A.stars(A.score(state, tiles)));
+      });
+      var tool = gh && gh.tool;
+      if (tool && tool.type === 'trap' && hv && A.isAimed(TT.defs.traps[tool.id])) {
+        var d = TT.defs.traps[tool.id], dir = tool.rot != null ? tool.rot : A.bestDir(state, d, hv.x, hv.y);
+        var ts = footprint(ctx, state, d, hv.x, hv.y, dir, t, true);
+        if (!d.aim.fixed) pointer(ctx, hv.x, hv.y, dir, colorOf(d));
+        starsAt(ctx, hv.x, hv.y, A.stars(A.score(state, ts)));
+      }
+      return;
+    }
+    if (state.phase !== 'raid' || !state.raid) return;
+    state.traps.forEach(function (tp) {
+      var def = TT.defs.traps[tp.id], r = tp.data && tp.data.r;
+      if (!A.isAimed(def)) return;
+      if (!def.aim.fixed && !tp.disabled) pointer(ctx, tp.x, tp.y, tp.dir || 0, colorOf(def));
+      if (!r || !r.tiles) return;
+      var age = state.raid.t - (r.flashT == null ? -9 : r.flashT);
+      if (age > 0.35 || !r.tiles.length) return;
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      r.tiles.forEach(function (c) {
+        ctx.globalAlpha = (0.25 + 0.6 * c.w) * (1 - age / 0.35);
+        ctx.fillStyle = colorOf(def);
+        ctx.fillRect(c.x * T + 1, c.y * T + 1, T - 2, T - 2);
+      });
+      ctx.restore();
+    });
+  });
+})(window.TT);
+
+</script>
 <script>/* src/audio/audio.js */
 /*
  * Tiny Tyrant — src/audio/audio.js
@@ -19262,6 +19651,7 @@ button { font-family: var(--font-body); color: var(--text); }
       var chk = TT.game.check(st, B.tool, x, y);
       if (!chk.ok) { if (!quiet) ui.toast(chk.reason, 'bad'); return chk; }
       var r = TT.game.act(st, B.tool, x, y);
+      if (r.ok && B.tool.type === 'trap') B.tool.rot = null;   // the next one aims itself again
       B.updateGhost();
       return r;
     },
@@ -21697,6 +22087,15 @@ button { font-family: var(--font-body); color: var(--text); }
     },
     rotate: function (dir) {
       var t = ui.build.tool;
+      if (t && t.type === 'trap' && TT.aim.isAimed(TT.defs.traps[t.id])) {
+        // the first turn starts from wherever the trap was already pointing
+        var def = TT.defs.traps[t.id], hv = TT.render.hover;
+        if (def.aim.fixed) return true;
+        var from = t.rot != null ? t.rot : hv && TT.state ? TT.aim.bestDir(TT.state, def, hv.x, hv.y) : 0;
+        t.rot = (from + (dir || 1) + 4) % 4;
+        ui.build.updateGhost();
+        return true;
+      }
       if (!t || t.type !== 'prefab') return false;
       t.rot = ((t.rot || 0) + (dir || 1) + 4) % 4; rot = t.rot;
       ui.build.updateGhost();
@@ -22115,7 +22514,8 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   function tool() { return ui.build.tool; }
   function isPaint(t) { return !!t && (t.type === 'dig' || t.type === 'sell'); }
-  function isRoom(t) { return !!t && t.type === 'prefab'; }
+  /* Anything that wants aiming first: a tap moves the preview and the Place button commits it. */
+  function isRoom(t) { return !!t && (t.type === 'prefab' || (t.type === 'trap' && TT.aim.isAimed(TT.defs.traps[t.id]))); }
   function midpoint(a, b) { return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2, d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) }; }
 
   /* The world tooltip and hover follow the "mouse", so let go of it a moment after a touch ends. */
@@ -23118,9 +23518,14 @@ button { font-family: var(--font-body); color: var(--text); }
         drag = { button: 0, sx: e.clientX, sy: e.clientY, paint: paint, lx: t.x, ly: t.y, anyOk: !!(res && res.ok), firstFail: res && !res.ok ? res.reason : null };
         return;
       }
-      var ent = entityAt(t);
+      var ent = entityAt(t), turnOnRelease = null;
+      if (st.phase === 'build' && !ent && TT.aim) {
+        // tapping a placed aimed trap turns it; dragging from it still pans
+        var placed = TT.grid.objectAt(st, t.x, t.y);
+        if (placed && placed.kind === 'trap') turnOnRelease = placed.obj;
+      }
       TT.render.selected = ent ? ent.uid : null;
-      drag = { button: 0, sx: e.clientX, sy: e.clientY, pan: true, moved: false };
+      drag = { button: 0, sx: e.clientX, sy: e.clientY, pan: true, moved: false, turn: turnOnRelease };
     } else {
       drag = { button: e.button, sx: e.clientX, sy: e.clientY, pan: true, moved: false };
     }
@@ -23157,6 +23562,7 @@ button { font-family: var(--font-body); color: var(--text); }
       else if (ui.build.tool) ui.build.setTool(null);
       else TT.render.selected = null;
     }
+    if (drag && drag.turn && !drag.moved && TT.aim.rotate(TT.state, drag.turn, 1)) ui.click();
     drag = null;
     canvas.classList.remove('panning');
   }
