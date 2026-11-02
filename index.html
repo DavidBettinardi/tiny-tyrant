@@ -3074,7 +3074,7 @@ button { font-family: var(--font-body); color: var(--text); }
     onRaidStart: function (ctx) { wipeScratch(ctx, 'poison_gas'); },
     onTrigger: function (ctx) {
       var s = scratch(ctx.trap);
-      s.cloudT = GAS_TIME; s.pulseT = 0; s.fxT = 0;
+      s.cloudT = GAS_TIME; s.fxT = 0;
       if (ctx.victim) ctx.damage(ctx.victim, ctx.def.dmg);
       ctx.fx('gas', { radius: GAS_RADIUS });
       ctx.log('A flagstone cracks. Green fog boils up out of the floor.');
@@ -3083,13 +3083,10 @@ button { font-family: var(--font-body); color: var(--text); }
     onTick: function (ctx) {
       var trap = ctx.trap, s = trap.data && trap.data.r;
       if (!s || !(s.cloudT > 0)) return;
-      s.cloudT -= ctx.dt; s.pulseT -= ctx.dt; s.fxT -= ctx.dt;
-      if (s.fxT <= 0) { s.fxT = 0.9; ctx.fx('gas', { radius: GAS_RADIUS * 0.8, light: false }); }
-      if (s.pulseT > 0) return;
-      s.pulseT = 0.5;
-      heroesSeen(ctx, GAS_RADIUS, trap.x, trap.y).forEach(function (h) {
-        ctx.status(h, 'poison', { dps: 5, duration: 2.5, damageType: 'poison' });
-      });
+      s.cloudT -= ctx.dt; s.fxT -= ctx.dt;
+      if (s.fxT > 0) return;
+      s.fxT = 0.9;
+      // heroes choke on the gas lying on the floor (src/systems/elements.js); this is the living minions' share
       minionsSeen(ctx, GAS_RADIUS, trap.x, trap.y, 'poison').forEach(function (m) {
         CB.applyStatus(m, 'poison', { dps: 3, duration: 2, damageType: 'poison', source: trap, cause: ctx.cause });
       });
@@ -3758,7 +3755,10 @@ button { font-family: var(--font-body); color: var(--text); }
       var v = ctx.victim; if (!v) return;
       var dx = v.x - ctx.cx, dy = v.y - ctx.cy, len = Math.sqrt(dx * dx + dy * dy) || 1;
       dx /= len; dy /= len;
-      var count = 0, ex = ctx.cx + dx * BALLISTA_REACH, ey = ctx.cy + dy * BALLISTA_REACH, def = ctx.def;
+      var count = 0, ex = ctx.cx + dx * BALLISTA_REACH, ey = ctx.cy + dy * BALLISTA_REACH, def = ctx.def, flaming = false;
+      for (var st = 1; st <= BALLISTA_REACH; st++) {
+        if (TT.elements.surfaceAt(ctx.state, Math.floor(ctx.cx + dx * st), Math.floor(ctx.cy + dy * st)) === 'fire') flaming = true;
+      }
       ctx.raid.heroes.slice().forEach(function (h) {
         if (!TT.isActive(h)) return;
         var rx = h.x - ctx.cx, ry = h.y - ctx.cy, along = rx * dx + ry * dy;
@@ -3766,9 +3766,10 @@ button { font-family: var(--font-body); color: var(--text); }
         if (Math.abs(rx * dy - ry * dx) > 0.55) return;
         if (!TT.path.lineOfSight(ctx.grid, ctx.x, ctx.y, h.tx, h.ty)) return;
         ctx.damage(h, def.dmg + (h.armor || 0) * 0.5);
+        if (flaming && TT.isActive(h)) ctx.status(h, 'burn', { dps: 6, duration: 4, damageType: 'fire' });
         count++;
       });
-      ctx.fx('arrow', { fromX: ctx.cx, fromY: ctx.cy, x: ex, y: ey, light: false, color: '#d8ccb0' });
+      ctx.fx('arrow', { fromX: ctx.cx, fromY: ctx.cy, x: ex, y: ey, light: false, color: flaming ? '#ff8a2a' : '#d8ccb0' });
       if (count > 1) ctx.log('A ballista bolt goes through ' + count + ' heroes and keeps going.');
     }
   });
@@ -3862,12 +3863,16 @@ button { font-family: var(--font-body); color: var(--text); }
         ctx.fx('shake', { magnitude: 3, duration: 0.3 });
         return;
       }
-      var dmg = ctx.def.dmg;
+      if (TT.elements.surfaceAt(ctx.state, tx, ty) === 'fire') s.blazing = true;
+      TT.elements.touch(ctx.state, tx, ty, 'sound', ctx.cause);
+      if (s.blazing) TT.elements.touch(ctx.state, tx, ty, 'fire', ctx.cause);
+      var dmg = ctx.def.dmg * (s.blazing ? 1.4 : 1);
       ctx.heroesInRadius(BOULDER_RADIUS, s.bx, s.by).forEach(function (h) {
         if (s.hit[h.uid]) return;
         s.hit[h.uid] = 1;
         ctx.damage(h, dmg);
         if (TT.isActive(h)) ctx.status(h, 'stun', { duration: 1 });
+        if (s.blazing && TT.isActive(h)) ctx.status(h, 'burn', { dps: 5, duration: 3, damageType: 'fire' });
       });
       ctx.minionsInRadius(BOULDER_RADIUS, s.bx, s.by).forEach(function (m) {
         if (s.hit[m.uid]) return;
@@ -3895,7 +3900,7 @@ button { font-family: var(--font-body); color: var(--text); }
       s.water = []; s.front = []; s.set = {};
       G.D4.forEach(function (o) {
         var x = ctx.x + o[0], y = ctx.y + o[1];
-        if (openTile(ctx, x, y)) { s.set[key(x, y)] = 1; s.water.push({ x: x, y: y }); s.front.push({ x: x, y: y }); }
+        if (openTile(ctx, x, y)) { s.set[key(x, y)] = 1; s.water.push({ x: x, y: y }); s.front.push({ x: x, y: y }); pour(ctx, x, y); }
       });
       ctx.fx('smoke', { radius: 0.8, color: '#6fb8e8', light: false });
       ctx.log('Rusted gates grind open. Black water pours into the passage.');
@@ -3912,21 +3917,14 @@ button { font-family: var(--font-body); color: var(--text); }
           G.D4.forEach(function (o) {
             var x = t.x + o[0], y = t.y + o[1], k = key(x, y);
             if (s.set[k] || s.water.length >= FLOOD_TILES || !openTile(ctx, x, y)) return;
-            s.set[k] = 1; s.water.push({ x: x, y: y }); next.push({ x: x, y: y });
+            s.set[k] = 1; s.water.push({ x: x, y: y }); next.push({ x: x, y: y }); pour(ctx, x, y);
           });
         });
         s.front = next;
       }
-      if (s.pulseT > 0) return;
-      s.pulseT = 0.25;
-      ctx.raid.heroes.forEach(function (h) {
-        if (!TT.isActive(h) || h.data.flying || !s.set[key(h.tx, h.ty)]) return;
-        ctx.status(h, 'slow', { duration: 0.5, magnitude: 0.35 });
-        h.data.soakedUntil = ctx.raid.t + 3;
-        if (h.status.burn) CB.clearStatus(h, 'burn');
-      });
     }
   });
+  function pour(ctx, x, y) { TT.elements.lay(ctx.state, x, y, 'water', FLOOD_TIME, { id: ctx.trap.id, uid: ctx.trap.uid, name: ctx.def.name, x: ctx.trap.x, y: ctx.trap.y }); }
 
   /* ================================================================== Piston Ram */
   TT.registerTrap({
@@ -4209,7 +4207,7 @@ button { font-family: var(--font-body); color: var(--text); }
         h.anim.attack = 0.3;
         h.facing = ctx.cx >= h.x ? 1 : -1;
         s.hp -= Math.max(4, (h.dmg || 0) - BARRICADE_ARMOR);
-        ctx.damage(h, BARRICADE_THORNS);
+        ctx.damage(h, s.blazing ? BARRICADE_THORNS * 4 : BARRICADE_THORNS, s.blazing ? 'fire' : null);
         if (s.hp <= 0) {
           s.hp = 0;
           trap.armed = false;
@@ -4349,6 +4347,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (e && e.trap) lightFuses(e.state || TT.state, e.trap.x + 0.5, e.trap.y + 0.5, FUSE_REACT, e.trap.uid);
   });
   function onDeath(e) { if (e && e.x != null) lightFuses(e.state || TT.state, e.x, e.y, FUSE_DEATH, null); }
+  TT.events.on('reaction', function (e) { if (e && e.power >= 2) lightFuses(e.state, e.x, e.y, FUSE_REACT, null); });
   TT.events.on('heroDeath', onDeath);
   TT.events.on('minionDeath', onDeath);
 })(window.TT);
@@ -4489,7 +4488,7 @@ button { font-family: var(--font-body); color: var(--text); }
 
   /* ---------------------------------------------------------------- the Mother of Webs */
   sig({
-    id: 'web_snare', boss: 'mother_of_webs', signature: 1, name: 'Web Snare', blurb: 'Webs everyone close for 3s.',
+    id: 'web_snare', boss: 'mother_of_webs', signature: 1, name: 'Web Snare', blurb: 'Webs everyone close and covers the floor. Flammable.',
     desc: 'Silk laid in the dust, thin as breath.',
     cost: { gold: 40, souls: 0 }, damageType: 'poison', trigger: 'step', dmg: 12, radius: 1.8, cooldown: 5,
     onTrigger: function (ctx) {
@@ -12043,6 +12042,765 @@ button { font-family: var(--font-body); color: var(--text); }
 })(window.TT);
 
 </script>
+<script>/* src/systems/elements.js */
+/*
+ * Tiny Tyrant — src/systems/elements.js
+ * Headless-safe. Deterministic: TT.rng only.
+ *
+ * The floor remembers. Traps leave surfaces on tiles (water, oil, ice, fire, gas, web, blood, toxic sludge,
+ * steam, storm cloud) and every hit carries an element. An element meeting the wrong surface or the wrong
+ * hero sets off a reaction: a burning hero walks into oil, lightning runs through a whole pool, an arrow
+ * shatters a frozen knight. Only heroes are hurt by reactions.
+ *
+ * Per raid: raid.surf = {'x,y': {s, t, by}}, raid.rxQ = delayed touches (chains spread tile by tile).
+ * Hero marks in h.data: soakedUntil, tarred, chilledUntil, frozenUntil, plagueUntil.
+ * Events: 'reaction' {name, id, x, y, color, power, state}.
+ *
+ * TT.elements API:
+ *   ROLES[trapId]        {lay, r, t, at, pulse, tok}: what a trap leaves behind or sets off
+ *   REACTIONS            the list shown to the player: {a, b, name, color}
+ *   tokens(def)          the elements a trap brings, for showing what it combines with
+ *   pair(defA, defB)     the reaction those two traps make, or null
+ *   partners(def)        [{with, reaction}] everything this trap reacts to
+ *   surfaceAt, lay, touch, marks(hero), power(def, state), hearts(amount)
+ */
+(function (TT) {
+  'use strict';
+  var U = TT.util, CB = TT.combat, G = TT.grid;
+  var E = TT.elements = {};
+  var HEART = 25;
+
+  E.COLORS = {
+    fire: '#ff8a2a', water: '#5fb4f0', frost: '#a8e4ff', storm: '#f0ee60', poison: '#8fd14f', oil: '#b08a58',
+    web: '#e4dece', gas: '#a8d860', blood: '#e0404a', shadow: '#b48bff', iron: '#c9c2b8', sound: '#f0d8a8',
+    steam: '#d8e8f0', ice: '#a8e4ff', toxic: '#8fd14f', cloud: '#f0ee60', dust: '#c8b898'
+  };
+  var TYPE_TO_ELEMENT = { fire: 'fire', frost: 'frost', lightning: 'storm', poison: 'poison', shadow: 'shadow', physical: 'iron' };
+  E.elementOfType = function (type) { return TYPE_TO_ELEMENT[type] || null; };
+
+  /*
+   * lay: surface left behind. r: tiles around (0 = one tile). t: seconds. at: 'victim' or the trap's own tile.
+   * pulse: an element that goes off across the area when the trap fires. tok: extra elements it brings.
+   */
+  E.ROLES = {
+    spike_pit: { lay: 'blood', r: 0, t: 18, at: 'victim' },
+    arrow_slit: {},
+    flame_vent: { pulse: 'fire', r: 1.6 },
+    collapsing_ceiling: { lay: 'dust', r: 1.6, t: 9, tok: ['gas'] },
+    poison_gas: { lay: 'gas', r: 2.2, t: 7 },
+    mimic_chest: { lay: 'blood', r: 0, t: 18, at: 'victim' },
+    alarm_bell: { pulse: 'sound', r: 3 },
+    frost_glyph: { lay: 'ice', r: 0, t: 7, pulse: 'frost' },
+    storm_sigil: { pulse: 'storm', r: 1.6 },
+    blood_ward: { lay: 'blood', r: 1.5, t: 12 },
+    shrieking_stone: { pulse: 'sound', r: 2.5 },
+    pendulum_blade: { lay: 'blood', r: 0, t: 18, at: 'victim' },
+    grinding_walls: { lay: 'blood', r: 1, t: 18 },
+    tar_pit: { lay: 'oil', r: 1.5, t: 24 },
+    acid_spout: { lay: 'toxic', r: 1, t: 7, at: 'victim' },
+    flood_sluice: { tok: ['water'] },
+    portcullis: { lay: 'blood', r: 0, t: 18 },
+    corpse_fuse: { pulse: 'fire', r: 2.2 },
+    grasping_hands: { lay: 'blood', r: 0, t: 18 },
+    death_knell: { pulse: 'sound', r: 3.5 },
+    magma_vent: { lay: 'fire', r: 1, t: 5, pulse: 'fire' },
+    molten_hoard: { lay: 'fire', r: 0, t: 4 },
+    crown_spikes: { lay: 'blood', r: 0, t: 18 },
+    web_snare: { lay: 'web', r: 1.8, t: 14 },
+    venom_drip: { lay: 'toxic', r: 1, t: 7, at: 'victim' },
+    barricade: { tok: ['wood'] }
+  };
+
+  /* What the player is told. a and b are icons; order does not matter. */
+  E.REACTIONS = [
+    { a: 'fire', b: 'oil', name: 'Inferno', color: '#ff7a20' },
+    { a: 'fire', b: 'gas', name: 'Explosion', color: '#ffb040' },
+    { a: 'fire', b: 'web', name: 'Flash Fire', color: '#ff9a40' },
+    { a: 'fire', b: 'water', name: 'Steam', color: '#d8e8f0' },
+    { a: 'fire', b: 'wood', name: 'Blazing Wall', color: '#ff7a20' },
+    { a: 'storm', b: 'water', name: 'Shock Pool', color: '#f0ee60' },
+    { a: 'storm', b: 'blood', name: 'Blood Arc', color: '#ff7080' },
+    { a: 'storm', b: 'oil', name: 'Inferno', color: '#ff7a20' },
+    { a: 'storm', b: 'gas', name: 'Explosion', color: '#ffb040' },
+    { a: 'storm', b: 'steam', name: 'Storm Cloud', color: '#f0ee60' },
+    { a: 'frost', b: 'water', name: 'Deep Freeze', color: '#a8e4ff' },
+    { a: 'frost', b: 'fire', name: 'Thermal Crack', color: '#c8f0ff' },
+    { a: 'iron', b: 'frost', name: 'Shatter', color: '#e8f8ff' },
+    { a: 'sound', b: 'frost', name: 'Ice Burst', color: '#e8f8ff' },
+    { a: 'poison', b: 'water', name: 'Tainted Pool', color: '#8fd14f' },
+    { a: 'poison', b: 'blood', name: 'Plague', color: '#b0e050' },
+    { a: 'shadow', b: 'blood', name: 'Feast', color: '#d060ff' }
+  ];
+  var PAIRS = {};
+  E.REACTIONS.forEach(function (r) { PAIRS[r.a + '+' + r.b] = r; PAIRS[r.b + '+' + r.a] = r; });
+
+  E.tokens = function (def) {
+    if (!def) return [];
+    var role = E.ROLES[def.id] || {}, out = [];
+    function add(t) { if (t && out.indexOf(t) < 0) out.push(t); }
+    if (!def.noDamage) add(E.elementOfType(def.damageType));
+    add(role.pulse);
+    if (role.lay && role.lay !== 'dust') add(role.lay === 'ice' ? 'frost' : role.lay === 'toxic' ? 'poison' : role.lay);
+    (role.tok || []).forEach(add);
+    return out;
+  };
+  /* The strongest reaction two traps can make together. */
+  E.pair = function (a, b) {
+    var ta = E.tokens(a), tb = E.tokens(b), i, j;
+    for (i = 0; i < ta.length; i++) for (j = 0; j < tb.length; j++) {
+      var r = PAIRS[ta[i] + '+' + tb[j]];
+      if (r) return r;
+    }
+    return null;
+  };
+  E.partners = function (def) {
+    var out = [], seen = {};
+    E.tokens(def).forEach(function (t) {
+      E.REACTIONS.forEach(function (r) {
+        var other = r.a === t ? r.b : r.b === t ? r.a : null;
+        if (!other || other === 'steam' || seen[t + other]) return;
+        seen[t + other] = 1;
+        out.push({ own: t, with: other, reaction: r });
+      });
+    });
+    return out;
+  };
+
+  /* Damage in hearts: the same unit as a hero's health pips. */
+  E.HEART = HEART;
+  E.hearts = function (amount) { return Math.max(1, Math.round(amount / HEART)); };
+  var DOT_GUESS = { flame_vent: 16, whirling_brazier: 6, black_mortar: 12, poison_gas: 35, magma_vent: 24, breath_duct: 15, venom_drip: 45, acid_spout: 9 };
+  E.power = function (def, state) {
+    if (!def || def.noDamage) return 0;
+    var base = (def.dmg || 0) + (DOT_GUESS[def.id] || 0);
+    if (!base) return 0;
+    var lv = state && TT.trapbook ? TT.trapbook.level(state, def.id) : 0;
+    return base * (1 + 0.3 * lv);
+  };
+
+  /* ------------------------------------------------------------------ tiles */
+  function key(x, y) { return x + ',' + y; }
+  function surf(raid) { return raid.surf || (raid.surf = {}); }
+  function open(state, x, y) {
+    var g = state.grid;
+    return G.inBounds(g, x, y) && G.isWalkable(g, x, y) && !state.raid.blocked[key(x, y)];
+  }
+  E.surfaceAt = function (state, x, y) {
+    var raid = state && state.raid, c = raid && raid.surf && raid.surf[key(x, y)];
+    return c ? c.s : null;
+  };
+  function creditOf(c) { return c && c.uid != null ? { id: c.id, uid: c.uid, name: c.name, x: c.x, y: c.y } : null; }
+  function scale(state) { return 1 + 0.06 * Math.max(0, (state.raidNum || 1) - 1); }
+
+  function pop(state, id, name, x, y, power) {
+    var raid = state.raid, rep = raid.report;
+    rep.reactions = rep.reactions || {};
+    rep.reactions[name] = (rep.reactions[name] || 0) + 1;
+    var gate = raid.rxGate || (raid.rxGate = {});
+    if (raid.t - (gate[name] || -9) < 0.35) return;
+    gate[name] = raid.t;
+    TT.events.emit('reaction', { id: id, name: name, x: x + 0.5, y: y + 0.5, color: (PAIRS[id] || {}).color, power: power || 1, state: state });
+  }
+  function hurt(state, h, amount, type, name, by) {
+    if (!TT.isActive(h)) return 0;
+    var c = by || {};
+    var cause = { kind: by ? 'trap' : 'reaction', id: by ? c.id : 'reaction', uid: by ? c.uid : null, x: c.x, y: c.y, name: name, damageType: type, rx: name };
+    var dealt = CB.damage(h, amount * scale(state), type, null, cause);
+    var rep = state.raid && state.raid.report, st = by && rep && rep.trapStats[by.uid];
+    if (st) st.damage += dealt;
+    if (rep) rep.reactionDamage = (rep.reactionDamage || 0) + dealt;
+    return dealt;
+  }
+  function heroesOn(state, x, y) {
+    return state.raid.heroes.filter(function (h) { return TT.isActive(h) && !h.data.flying && h.tx === x && h.ty === y; });
+  }
+  function fx(type, o) { TT.game.fx(type, o); }
+  function later(raid, delay, x, y, el, by) { (raid.rxQ || (raid.rxQ = [])).push({ at: raid.t + delay, x: x, y: y, el: el, by: by }); }
+
+  /* Connected tiles of the given surfaces, so a pool acts as one body. */
+  function pool(state, x, y, kinds, max) {
+    var s = surf(state.raid), out = [], seen = {}, q = [{ x: x, y: y }];
+    seen[key(x, y)] = 1;
+    while (q.length && out.length < max) {
+      var c = q.shift(), cell = s[key(c.x, c.y)];
+      if (!cell || kinds.indexOf(cell.s) < 0) continue;
+      out.push(c);
+      G.D4.forEach(function (o) {
+        var k = key(c.x + o[0], c.y + o[1]);
+        if (!seen[k]) { seen[k] = 1; q.push({ x: c.x + o[0], y: c.y + o[1] }); }
+      });
+    }
+    return out;
+  }
+  function neighbours(state, x, y, kinds, el, by, delay) {
+    var s = surf(state.raid);
+    G.D4.forEach(function (o) {
+      var c = s[key(x + o[0], y + o[1])];
+      if (c && kinds.indexOf(c.s) >= 0) later(state.raid, delay, x + o[0], y + o[1], el, by);
+    });
+  }
+
+  function freeze(state, h, dur, by) {
+    if (!TT.isActive(h) || h.data.noFreeze) return false;
+    var ok = CB.applyStatus(h, 'stun', { duration: dur, cause: { kind: by ? 'trap' : 'reaction', id: by ? by.id : 'reaction', uid: by ? by.uid : null, name: 'Deep Freeze', damageType: 'frost', rx: 'Deep Freeze' } });
+    if (ok) h.data.frozenUntil = state.raid.t + dur;
+    return ok;
+  }
+
+  /* ---------------------------------------------- the reactions on the floor */
+  var BURNABLE = ['oil', 'web', 'gas', 'dust'];
+  function ignite(state, x, y, by, kind) {
+    var s = surf(state.raid), k = key(x, y), name = kind === 'web' ? 'Flash Fire' : 'Inferno';
+    s[k] = { s: 'fire', t: kind === 'web' ? 2.5 : 7, by: by };
+    pop(state, 'fire+' + kind, name, x, y, 2);
+    heroesOn(state, x, y).forEach(function (h) {
+      hurt(state, h, kind === 'web' ? 12 : 18, 'fire', name, by);
+      if (TT.isActive(h)) CB.applyStatus(h, 'burn', { dps: 5, duration: 4, damageType: 'fire', cause: { kind: 'reaction', id: 'reaction', name: name, damageType: 'fire', rx: name } });
+    });
+    fx('fire', { x: x + 0.5, y: y + 0.5, radius: 0.6, light: true });
+    neighbours(state, x, y, BURNABLE, 'fire', by, 0.14);
+  }
+  function explode(state, x, y, by, dust) {
+    var raid = state.raid, s = surf(raid);
+    delete s[key(x, y)];
+    pop(state, 'fire+gas', 'Explosion', x, y, 3);
+    raid.heroes.slice().forEach(function (h) {
+      if (!TT.isActive(h) || U.dist(h.x, h.y, x + 0.5, y + 0.5) > 1.5) return;
+      if ((h.data.blastAt || -9) > raid.t - 0.4) return;   // one blast per hero, however much gas there was
+      h.data.blastAt = raid.t;
+      hurt(state, h, dust ? 22 : 34, 'fire', 'Explosion', by);
+      if (TT.isActive(h)) CB.applyStatus(h, 'stun', { duration: 0.7, cause: { kind: 'reaction', id: 'reaction', name: 'Explosion', damageType: 'fire', rx: 'Explosion' } });
+    });
+    fx('fire', { x: x + 0.5, y: y + 0.5, radius: 1.1 });
+    fx('shake', { magnitude: 2.5, duration: 0.2 });
+    neighbours(state, x, y, BURNABLE, 'fire', by, 0.09);
+  }
+  function shock(state, x, y, by, kinds, name, id) {
+    var raid = state.raid, tiles = pool(state, x, y, kinds, 40), s = surf(raid), now = raid.t;
+    var cell = s[key(x, y)];
+    if (!cell || cell.zap > now) return;
+    tiles.forEach(function (c) {
+      s[key(c.x, c.y)].zap = now + 1.5;
+      s[key(c.x, c.y)].flash = now + 0.3;
+      heroesOn(state, c.x, c.y).forEach(function (h) {
+        hurt(state, h, name === 'Blood Arc' ? 18 : 24, 'lightning', name, by);
+        if (TT.isActive(h)) CB.applyStatus(h, 'stun', { duration: 0.9, cause: { kind: 'reaction', id: 'reaction', name: name, damageType: 'lightning', rx: name } });
+        fx('sparks', { x: h.x, y: h.y, color: '#f4f8a0' });
+      });
+    });
+    pop(state, id, name, x, y, 2);
+  }
+
+  /* An element arrives on a tile. */
+  E.touch = function (state, x, y, el, by) {
+    var raid = state && state.raid;
+    if (!raid || !el) return;
+    var s = surf(raid), k = key(x, y), c = s[k], kind = c && c.s;
+    if (!kind) return;
+    var who = by || c.by;
+    if (el === 'fire') {
+      if (kind === 'oil' || kind === 'web') ignite(state, x, y, who, kind);
+      else if (kind === 'gas' || kind === 'dust') explode(state, x, y, who, kind === 'dust');
+      else if (kind === 'water') {
+        pool(state, x, y, ['water'], 12).forEach(function (t) { s[key(t.x, t.y)] = { s: 'steam', t: 6, by: who }; });
+        pop(state, 'fire+water', 'Steam', x, y, 1);
+      }
+      else if (kind === 'ice') s[k] = { s: 'water', t: 8, by: who };
+      else if (kind === 'toxic') s[k] = { s: 'gas', t: 4, by: who };
+    } else if (el === 'storm') {
+      if (kind === 'water' || kind === 'toxic') shock(state, x, y, who, ['water', 'toxic', 'blood'], 'Shock Pool', 'storm+water');
+      else if (kind === 'blood') shock(state, x, y, who, ['water', 'toxic', 'blood'], 'Blood Arc', 'storm+blood');
+      else if (kind === 'oil' || kind === 'web') ignite(state, x, y, who, kind);
+      else if (kind === 'gas' || kind === 'dust') explode(state, x, y, who, kind === 'dust');
+      else if (kind === 'steam') {
+        pool(state, x, y, ['steam'], 20).forEach(function (t) { s[key(t.x, t.y)] = { s: 'cloud', t: 6, by: who }; });
+        pop(state, 'storm+steam', 'Storm Cloud', x, y, 2);
+      }
+    } else if (el === 'frost') {
+      if (kind === 'water' || kind === 'blood' || kind === 'toxic') {
+        pool(state, x, y, ['water', 'blood', 'toxic'], 30).forEach(function (t) {
+          s[key(t.x, t.y)] = { s: 'ice', t: 10, by: who };
+          heroesOn(state, t.x, t.y).forEach(function (h) { freeze(state, h, 2, who); });
+        });
+        pop(state, 'frost+water', 'Deep Freeze', x, y, 2);
+      }
+      else if (kind === 'fire') s[k] = { s: 'water', t: 6, by: who };
+      else if (kind === 'steam') s[k] = { s: 'water', t: 6, by: who };
+    } else if (el === 'poison') {
+      if (kind === 'water') {
+        pool(state, x, y, ['water'], 30).forEach(function (t) { s[key(t.x, t.y)] = { s: 'toxic', t: 12, by: who }; });
+        pop(state, 'poison+water', 'Tainted Pool', x, y, 1);
+      } else if (kind === 'blood') {
+        s[k] = { s: 'toxic', t: 8, by: who };
+        heroesOn(state, x, y).forEach(function (h) { h.data.plagueUntil = raid.t + 10; });
+        pop(state, 'poison+blood', 'Plague', x, y, 2);
+      }
+    } else if (el === 'shadow') {
+      if (kind === 'blood') {
+        delete s[k];
+        var boss = raid.boss;
+        if (TT.isActive(boss)) CB.heal(boss, boss.maxHp * 0.015, null);
+        raid.minions.forEach(function (m) { if (TT.isActive(m) && U.dist(m.x, m.y, x + 0.5, y + 0.5) < 5) CB.heal(m, m.maxHp * 0.15, null); });
+        state.gold += 2;
+        pop(state, 'shadow+blood', 'Feast', x, y, 1);
+      }
+    } else if (el === 'sound') {
+      if (kind === 'ice') {
+        delete s[k];
+        heroesOn(state, x, y).forEach(function (h) { hurt(state, h, 22, 'physical', 'Ice Burst', who); });
+        fx('ring', { x: x + 0.5, y: y + 0.5, radius: 0.7, color: '#e8f8ff', light: false });
+        pop(state, 'sound+frost', 'Ice Burst', x, y, 2);
+      }
+    }
+  };
+  function touchArea(state, x, y, r, el, by) {
+    disc(state, x, y, r).forEach(function (t) { E.touch(state, t.x, t.y, el, by); });
+  }
+  /* Tiles reachable from (x,y) within r, so an area never leaks through a wall. */
+  function disc(state, x, y, r) {
+    var out = [], seen = {}, q = [{ x: x, y: y }];
+    seen[key(x, y)] = 1;
+    while (q.length) {
+      var c = q.shift();
+      if (!open(state, c.x, c.y)) continue;
+      out.push(c);
+      G.D4.forEach(function (o) {
+        var nx = c.x + o[0], ny = c.y + o[1], k = key(nx, ny);
+        if (seen[k] || U.dist(nx, ny, x, y) > r) return;
+        seen[k] = 1; q.push({ x: nx, y: ny });
+      });
+    }
+    return out;
+  }
+
+  /* A surface is poured onto a tile; what is already there has a say. */
+  E.lay = function (state, x, y, kind, t, by) {
+    var raid = state && state.raid;
+    if (!raid || !open(state, x, y)) return;
+    var s = surf(raid), k = key(x, y), c = s[k], was = c && c.s;
+    if (was === 'fire') {
+      if (kind === 'oil' || kind === 'web') return ignite(state, x, y, by, kind);
+      if (kind === 'gas' || kind === 'dust') { s[k] = { s: kind, t: t, by: by }; return explode(state, x, y, by, kind === 'dust'); }
+      if (kind === 'water') { s[k] = { s: 'steam', t: 6, by: by }; return pop(state, 'fire+water', 'Steam', x, y, 1); }
+      if (kind === 'blood') return;
+    }
+    if (kind === 'fire') {
+      if (was) { E.touch(state, x, y, 'fire', by); if (s[k]) return; }
+      s[k] = { s: 'fire', t: t, by: by };
+      return;
+    }
+    if (kind === 'blood' && was && was !== 'blood') return;
+    if (kind === 'water' && (was === 'oil' || was === 'ice' || was === 'toxic')) return;
+    if (kind === 'gas' && was === 'water') { s[k] = { s: 'toxic', t: t + 4, by: by }; return pop(state, 'poison+water', 'Tainted Pool', x, y, 1); }
+    if (kind === 'toxic' && was === 'water') return E.touch(state, x, y, 'poison', by);
+    if (kind === 'ice' && (was === 'water' || was === 'blood')) return E.touch(state, x, y, 'frost', by);
+    s[k] = { s: kind, t: t, by: by };
+  };
+
+  /* ---------------------------------------------- what a surface does to those on it */
+  function rxCause(name, type) { return { kind: 'reaction', id: 'reaction', name: name, damageType: type, rx: name }; }
+  function standing(state, h, cell, x, y) {
+    var raid = state.raid, st = raid.t;
+    switch (cell.s) {
+      case 'water':
+        CB.applyStatus(h, 'slow', { duration: 0.5, magnitude: 0.3, cause: rxCause('Water', 'frost') });
+        h.data.soakedUntil = st + 4;
+        if (h.status.burn) CB.clearStatus(h, 'burn');
+        break;
+      case 'oil':
+        CB.applyStatus(h, 'slow', { duration: 0.5, magnitude: 0.45, cause: rxCause('Oil', 'fire') });
+        h.data.tarred = st + 6;
+        if (h.status.burn) E.touch(state, x, y, 'fire', cell.by);
+        break;
+      case 'web':
+        if (!(h.data.webbedAt > st - 3)) { h.data.webbedAt = st; CB.applyStatus(h, 'web', { duration: 1.6, cause: rxCause('Web', 'poison') }); }
+        if (h.status.burn) E.touch(state, x, y, 'fire', cell.by);
+        break;
+      case 'gas':
+        CB.applyStatus(h, 'poison', { dps: 5, duration: 2.5, damageType: 'poison', cause: rxCause('Gas', 'poison') });
+        if (h.status.burn) E.touch(state, x, y, 'fire', cell.by);
+        break;
+      case 'dust':
+        if (h.status.burn) E.touch(state, x, y, 'fire', cell.by);
+        break;
+      case 'toxic':
+        CB.applyStatus(h, 'poison', { dps: 4, duration: 3, damageType: 'poison', cause: rxCause('Sludge', 'poison') });
+        if (h.armor > 0 && TT.rng.chance(0.1)) h.armor = Math.max(0, h.armor - 1);
+        break;
+      case 'ice':
+        h.data.chilledUntil = st + 3;
+        if (TT.rng.chance(0.09)) {
+          CB.applyStatus(h, 'stun', { duration: 0.8, cause: rxCause('Ice', 'frost') });
+          TT.events.emit('reaction', { id: 'slip', name: 'Slip', x: h.x, y: h.y, color: '#a8e4ff', power: 0, state: state });
+        }
+        break;
+      case 'fire':
+        CB.applyStatus(h, 'burn', { dps: 5, duration: 3, damageType: 'fire', cause: rxCause('Flames', 'fire') });
+        break;
+      case 'steam':
+        hurt(state, h, 1.8, 'fire', 'Steam', cell.by);
+        h.data.blindUntil = st + 3;
+        CB.applyStatus(h, 'slow', { duration: 0.5, magnitude: 0.2, cause: rxCause('Steam', 'fire') });
+        break;
+      case 'cloud':
+        if (!(h.data.zapAt > st - 1)) {
+          h.data.zapAt = st;
+          hurt(state, h, 13, 'lightning', 'Storm Cloud', cell.by);
+          if (TT.isActive(h)) CB.applyStatus(h, 'stun', { duration: 0.3, cause: rxCause('Storm Cloud', 'lightning') });
+        }
+        break;
+    }
+  }
+
+  TT.events.on('tick', function (ctx) {
+    var raid = ctx.raid, state = ctx.state;
+    if (!raid || raid.over) return;
+    var q = raid.rxQ;
+    if (q && q.length) {
+      raid.rxQ = q.filter(function (j) {
+        if (j.at > raid.t) return true;
+        E.touch(state, j.x, j.y, j.el, j.by);
+        return false;
+      });
+    }
+    var s = raid.surf;
+    if (s) Object.keys(s).forEach(function (k) {
+      s[k].t -= ctx.dt;
+      if (s[k].t <= 0) delete s[k];
+    });
+    raid.rxT = (raid.rxT || 0) - ctx.dt;
+    if (raid.rxT > 0) return;
+    raid.rxT = 0.25;
+    raid.heroes.slice().forEach(function (h) {
+      if (!TT.isActive(h)) return;
+      var d = h.data;
+      if (d.plagueUntil > raid.t) {
+        CB.applyStatus(h, 'poison', { dps: 4, duration: 1, damageType: 'poison', cause: rxCause('Plague', 'poison') });
+        raid.heroes.forEach(function (o) {
+          if (o !== h && TT.isActive(o) && !(o.data.plagueUntil > raid.t) && U.dist(h.x, h.y, o.x, o.y) < 1.3) {
+            o.data.plagueUntil = raid.t + 7;
+            TT.events.emit('reaction', { id: 'poison+blood', name: 'Plague', x: o.x, y: o.y, color: '#b0e050', power: 0, state: state });
+          }
+        });
+      }
+      if (d.flying || !s) return;
+      var cell = s[key(h.tx, h.ty)];
+      if (cell) standing(state, h, cell, h.tx, h.ty);
+    });
+    // a barricade beside open flame becomes a wall of fire
+    if (s) state.traps.forEach(function (t) {
+      if (t.id !== 'barricade' || !t.armed) return;
+      var r = t.data && t.data.r;
+      if (!r || r.blazing) return;
+      G.D4.forEach(function (o) {
+        var c = s[key(t.x + o[0], t.y + o[1])];
+        if (c && c.s === 'fire' && !r.blazing) { r.blazing = true; pop(state, 'fire+wood', 'Blazing Wall', t.x, t.y, 2); }
+      });
+    });
+  });
+
+  /* Every hit carries its element to the tile and into the hero. */
+  TT.events.on('heroDamaged', function (e) {
+    var h = e.target, c = e.cause || {}, state = TT.state;
+    if (!state || !state.raid || c.rx || c.via) return;
+    var el = E.elementOfType(e.type), by = creditOf(c), raid = state.raid, d = h.data, t = raid.t;
+    if (!el) return;
+    if (el !== 'iron' && !d.flying) E.touch(state, h.tx, h.ty, el, by);
+    if (!TT.isActive(h)) return;
+    if (el === 'iron') {
+      if (d.frozenUntil > t) {
+        d.frozenUntil = 0;
+        if (h.status.stun) CB.clearStatus(h, 'stun');
+        hurt(state, h, 36, 'physical', 'Shatter', by);
+        fx('ring', { x: h.x, y: h.y, radius: 0.9, color: '#e8f8ff', light: false });
+        pop(state, 'iron+frost', 'Shatter', h.tx, h.ty, 3);
+      }
+    } else if (el === 'fire') {
+      if (d.chilledUntil > t || d.frozenUntil > t) crack(state, h, by);
+      if (d.soakedUntil > t) d.soakedUntil = 0;
+      else if (d.frozenUntil > t) d.frozenUntil = 0;
+    } else if (el === 'frost') {
+      if (h.status.burn) { CB.clearStatus(h, 'burn'); crack(state, h, by); }
+      if (TT.isActive(h) && (d.soakedUntil > t || d.chilledUntil > t) && freeze(state, h, 1.6, by)) {
+        pop(state, 'frost+water', 'Deep Freeze', h.tx, h.ty, 2);
+      }
+      d.chilledUntil = t + 5;
+    }
+  });
+  function crack(state, h, by) {
+    h.armor = Math.max(0, (h.armor || 0) - 2);
+    h.data.chilledUntil = 0;
+    hurt(state, h, 16, 'physical', 'Thermal Crack', by);
+    pop(state, 'frost+fire', 'Thermal Crack', h.tx, h.ty, 2);
+  }
+
+  /* Plate is a poor thing to wear in a lightning storm. */
+  TT.addFilter('damage', function (amt, c) {
+    var t = c.target;
+    return c.type === 'lightning' && t && t.kind === 'hero' && (t.armor || 0) >= 3 ? amt * 1.3 : amt;
+  }, 28);
+  /* Steam hides what is on the floor. */
+  var baseDetect = TT.hooks.trapDetectChance;
+  TT.hooks.trapDetectChance = function (hero, trap, state) {
+    var st = state || TT.state;
+    if (hero.data && st && st.raid && hero.data.blindUntil > st.raid.t) return 0;
+    return baseDetect ? baseDetect(hero, trap, state) : 0;
+  };
+
+  /* Traps leave what they leave. */
+  function originOf(state, e, role) {
+    var v = e.victim;
+    if (role.at === 'victim' && v) return { x: v.tx, y: v.ty };
+    if (open(state, e.x, e.y)) return { x: e.x, y: e.y };
+    if (v) return { x: v.tx, y: v.ty };
+    var out = null;
+    G.D4.forEach(function (o) { if (!out && open(state, e.x + o[0], e.y + o[1])) out = { x: e.x + o[0], y: e.y + o[1] }; });
+    return out;
+  }
+  TT.events.on('trapTrigger', function (e) {
+    var state = e.state || TT.state, role = e.def && E.ROLES[e.def.id];
+    if (!role || !state || !state.raid) return;
+    var at = originOf(state, e, role);
+    if (!at) return;
+    var by = { id: e.trap.id, uid: e.trap.uid, name: e.def.name, x: e.x, y: e.y };
+    if (role.lay) disc(state, at.x, at.y, role.r || 0).forEach(function (t) { E.lay(state, t.x, t.y, role.lay, role.t || 8, by); });
+    if (role.pulse) touchArea(state, at.x, at.y, role.r || 1, role.pulse, by);
+  });
+  /* The dead bleed where they fall. */
+  TT.events.on('heroDeath', function (e) {
+    var state = e.state || TT.state;
+    if (!state || !state.raid || e.x == null) return;
+    E.lay(state, Math.floor(e.x), Math.floor(e.y), 'blood', 20, creditOf(e.cause));
+  });
+
+  /* What the marks over a hero's head should show. */
+  E.marks = function (h, t) {
+    var d = h.data, s = h.status, out = [];
+    if (d.frozenUntil > t) out.push('frost');
+    else if (d.chilledUntil > t) out.push('frost');
+    if (s.burn) out.push('fire');
+    if (d.soakedUntil > t) out.push('water');
+    if (d.tarred > t) out.push('oil');
+    if (d.plagueUntil > t) out.push('blood');
+    if (s.poison) out.push('poison');
+    if (s.web) out.push('web');
+    if (s.fear) out.push('shadow');
+    return out;
+  };
+})(window.TT);
+
+</script>
+<script>/* src/systems/nemesis.js */
+/*
+ * Tiny Tyrant — src/systems/nemesis.js
+ * Headless-safe. Deterministic: its own dice, so a grudge leaves the raid's dice alone.
+ *
+ * Heroes who get away come back as somebody. The best survivor of a raid becomes a nemesis: named, tougher,
+ * proof against whatever hurt them most, weak to one thing, and worth a bounty. Each escape ranks them up
+ * and hardens them further. If the player lets nobody escape, the fallen hero who did the most damage
+ * crawls out of the grave instead, so every reign gets a rival.
+ *
+ * Reign data: state.ext.nemesis = {active: {heroId: rec}, trophies: n}
+ * rec: {heroId, name, rank, resist: [damageType], weak: damageType, lastRaid, risen}
+ * Hero: h.data.nemesis = rank. Report: rep.nemesis = [{kind: 'new'|'risen'|'rank'|'slain', name, rank, gold, souls}]
+ * Events: 'nemesisArrives' {hero, rec}, 'nemesisSlain' {hero, rec, gold, souls}.
+ *
+ * TT.nemesis API: active(state), upNext(state), bounty(rec), trophies(state)
+ */
+(function (TT) {
+  'use strict';
+  var N = TT.nemesis = {};
+  var MAX_ACTIVE = 3, MAX_PER_RAID = 2, MAX_RANK = 5;
+  var TITLES = {
+    fire: 'the Fireproof', frost: 'Frostblood', lightning: 'Stormproof', poison: 'the Unpoisoned',
+    shadow: 'the Unafraid', physical: 'Ironhide', holy: 'the Blessed'
+  };
+  var TYPES = ['fire', 'frost', 'lightning', 'poison', 'shadow', 'physical'];
+
+  function ext(state) {
+    state.ext = state.ext || {};
+    return state.ext.nemesis || (state.ext.nemesis = { active: {}, trophies: 0 });
+  }
+  N.active = function (state) {
+    var a = ext(state).active;
+    return Object.keys(a).map(function (id) { return a[id]; });
+  };
+  N.trophies = function (state) { return ext(state).trophies; };
+  N.bounty = function (rec) { return { gold: 70 + 70 * rec.rank, souls: rec.rank }; };
+  N.upNext = function (state) {
+    return N.active(state).filter(function (r) { return r.lastRaid < state.raidNum; })
+      .sort(function (a, b) { return a.lastRaid - b.lastRaid || (a.heroId < b.heroId ? -1 : 1); })
+      .slice(0, MAX_PER_RAID);
+  };
+
+  function dice(state) {
+    var s = ((state.seed | 0) ^ Math.imul(state.raidNum + 77 | 0, 2654435761)) >>> 0;
+    return function () {
+      s = (s + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function worstType(h, except) {
+    var taken = (h && h.stats && h.stats.taken) || {}, best = null, bv = 0;
+    Object.keys(taken).forEach(function (t) {
+      if (taken[t] > bv && TITLES[t] && except.indexOf(t) < 0) { bv = taken[t]; best = t; }
+    });
+    return best;
+  }
+  function pickNew(list, except, rnd) {
+    var pool = TYPES.filter(function (t) { return except.indexOf(t) < 0; });
+    return pool[Math.floor(rnd() * pool.length)];
+  }
+  function score(h, carried) { return (h.stats ? h.stats.dealt + h.stats.kills * 30 : 0) + (carried || 0); }
+
+  function shortName(name) {
+    var words = String(name).split(' ').filter(function (w) { return !/^(Ser|Sir|Dame|Brother|Sister|Father|Mother|Grand|Inquisitor|the)$/.test(w); });
+    return words[0] || String(name);
+  }
+  function create(state, h, risen, rnd) {
+    var type = worstType(h, []) || pickNew(TYPES, [], rnd);
+    var rec = {
+      heroId: h.heroId, name: shortName(h.name) + ' ' + TITLES[type], rank: 1, resist: [type],
+      weak: pickNew(TYPES, [type], rnd), lastRaid: state.raidNum, risen: !!risen
+    };
+    ext(state).active[h.heroId] = rec;
+    return rec;
+  }
+  function rankUp(state, rec, h, rnd) {
+    rec.rank = Math.min(MAX_RANK, rec.rank + 1);
+    rec.lastRaid = state.raidNum;
+    if (rec.rank % 2 === 1) {
+      var more = worstType(h, rec.resist.concat(rec.weak)) || pickNew(TYPES, rec.resist.concat(rec.weak), rnd);
+      if (more) rec.resist.push(more);
+    }
+  }
+
+  TT.events.on('raidEnd', function (e) {
+    var st = e.state, rep = e.report;
+    if (!st || !rep || !st.raid) return;
+    var g = ext(st), raid = st.raid, rnd = dice(st), notes = rep.nemesis = rep.nemesis || [], best = null, bs = -1;
+    function hero(uid) { return raid.byUid[uid]; }
+    rep.escapes.forEach(function (x) {
+      var h = hero(x.uid), rec = g.active[x.heroId];
+      if (!h) return;
+      if (rec) {
+        rankUp(st, rec, h, rnd);
+        notes.push({ kind: 'rank', name: rec.name, rank: rec.rank });
+        return;
+      }
+      var s = score(h, x.carried);
+      if (s > bs) { bs = s; best = h; }
+    });
+    // captured is as good as dead for a grudge
+    (rep.captured || []).forEach(function (x) {
+      var rec = x && g.active[x.heroId];
+      if (rec) { delete g.active[x.heroId]; pay(st, rec, notes); }
+    });
+    var count = Object.keys(g.active).length;
+    if (best && count < MAX_ACTIVE) {
+      var r = create(st, best, false, rnd);
+      notes.push({ kind: 'new', name: r.name, rank: 1 });
+    } else if (!best && !count && st.raidNum >= 3 && st.raidNum - (g.lastSlain || 0) >= 3) {
+      // nobody got out: the worst of the dead refuses to stay that way
+      var worst = null, ws = -1;
+      raid.heroes.forEach(function (h) {
+        if (h.alive || h.fate === 'captured' || !h.heroId || /^named_/.test(h.heroId)) return;
+        var s = score(h, 0);
+        if (s > ws) { ws = s; worst = h; }
+      });
+      if (worst) {
+        var rr = create(st, worst, true, rnd);
+        notes.push({ kind: 'risen', name: rr.name, rank: 1 });
+      }
+    }
+  });
+
+  function pay(st, rec, notes) {
+    var b = N.bounty(rec), g = ext(st);
+    st.gold += b.gold;
+    st.souls += b.souls;
+    g.trophies++;
+    g.lastSlain = st.raidNum;
+    if (st.ext.glory) st.ext.glory.bonus += 10 * rec.rank;
+    if (notes) notes.push({ kind: 'slain', name: rec.name, rank: rec.rank, gold: b.gold, souls: b.souls });
+    return b;
+  }
+  TT.events.on('heroDeath', function (e) {
+    var st = e.state || TT.state, h = e.hero;
+    if (!st || !h || !h.data.nemesis || !st.raid) return;
+    var g = ext(st), rec = g.active[h.heroId];
+    if (!rec) return;
+    delete g.active[h.heroId];
+    var rep = st.raid.report, notes = rep.nemesis = rep.nemesis || [], b = pay(st, rec, notes);
+    TT.events.emit('nemesisSlain', { hero: h, rec: rec, gold: b.gold, souls: b.souls, state: st });
+  });
+
+  /* They come back whether the town would have sent them or not. */
+  TT.addFilter('party', function (party, ctx) {
+    var st = ctx && ctx.state;
+    if (!st || !TT.roster) return party;
+    N.upNext(st).forEach(function (rec) {
+      var spec = null;
+      party.forEach(function (s) { if (s.heroId === rec.heroId) spec = s; });
+      if (!spec) {
+        spec = TT.roster.specFor(st, rec.heroId);
+        if (!spec) { delete ext(st).active[rec.heroId]; return; }
+        // takes the place of a newcomer, so the party stays the size the season asked for
+        for (var i = party.length - 1; i >= 0; i--) {
+          var s = party[i];
+          if (!s.returning && !s.famous && !(s.data && (s.data.famous || s.data.finalLeader))) { party.splice(i, 1); break; }
+        }
+        party.push(spec);
+      }
+      spec.returning = true;
+      spec.name = rec.name;
+      spec.resist = spec.resist || {};
+      rec.resist.forEach(function (t) { spec.resist[t] = 0.6; });
+      spec.resist[rec.weak] = -0.75;
+      spec.statusResist = spec.statusResist || {};
+      if (rec.resist.indexOf('fire') >= 0) spec.statusResist.burn = 1;
+      if (rec.resist.indexOf('poison') >= 0) spec.statusResist.poison = 1;
+      if (rec.resist.indexOf('shadow') >= 0) spec.statusResist.fear = 1;
+      if (rec.resist.indexOf('lightning') >= 0) spec.statusResist.stun = 0.5;
+      spec.data = spec.data || {};
+      spec.data.nemesis = rec.rank;
+      spec.data.noFreeze = rec.resist.indexOf('frost') >= 0;
+      rec.lastRaid = st.raidNum;
+    });
+    return party;
+  }, 95);
+
+  TT.addFilter('heroStats', function (h) {
+    var r = h.data.nemesis;
+    if (r) {
+      h.maxHp = Math.round(h.maxHp * (1.25 + 0.3 * r)); h.hp = h.maxHp;
+      h.dmg *= 1 + 0.15 * r;
+      h.fleeAt = 0;
+      h.data.neverFlee = true;
+    }
+    return h;
+  }, 36);
+  TT.events.on('heroSpawn', function (e) {
+    var h = e.hero, st = e.state || TT.state;
+    if (!h || !h.data.nemesis || !st) return;
+    var rec = ext(st).active[h.heroId];
+    if (rec) TT.events.emit('nemesisArrives', { hero: h, rec: rec, state: st });
+  });
+
+  /* Every trophy on the wall makes the barrow a little crueller. */
+  TT.addFilter('damage', function (amt, c) {
+    var st = c.state, g = st && st.ext && st.ext.nemesis;
+    if (!g || !g.trophies || !c.cause || c.cause.kind !== 'trap' || !c.target || c.target.kind !== 'hero') return amt;
+    return amt * (1 + 0.03 * g.trophies);
+  }, 26);
+
+  TT.addFilter('newRun', function (state) { ext(state); return state; }, 8);
+  TT.events.on('runLoaded', function (e) { if (e && e.state) ext(e.state); });
+})(window.TT);
+
+</script>
 <script>/* src/systems/trapbook.js */
 /*
  * Tiny Tyrant — src/systems/trapbook.js
@@ -12080,7 +12838,7 @@ button { font-family: var(--font-body); color: var(--text); }
     arrow_slit: 'Shoots heroes who pass.',
     flame_vent: 'Burns everyone close.',
     collapsing_ceiling: 'One huge crush, then rubble. Single use.',
-    poison_gas: 'Poison cloud. Hurts your living minions too.',
+    poison_gas: 'Poison cloud on the floor. Flammable. Hurts your living minions too.',
     mimic_chest: 'Lures greedy heroes, then bites.',
     alarm_bell: 'Calls your minions to the hero.',
     frost_glyph: 'Slows. Freezes a hero already slowed.',
@@ -12093,12 +12851,12 @@ button { font-family: var(--font-body); color: var(--text); }
     shrieking_stone: 'Stuns heroes and calls minions.',
     pendulum_blade: 'Heavy swing that ignores armor.',
     grinding_walls: 'Crushes and stuns.',
-    tar_pit: 'Slows. Fire makes it burn hard.',
+    tar_pit: 'Spreads slowing oil. Fire turns it into an inferno.',
     acid_spout: 'Poisons and strips armor.',
     ballista_turret: 'Bolt pierces a whole line of heroes.',
     portcullis: 'Seals the corridor for 6s, splitting the party.',
     rolling_boulder: 'Rolls down the corridor, hitting everything.',
-    flood_sluice: 'Floods the area. Slows, and boosts lightning.',
+    flood_sluice: 'Floods the area. Slows and conducts.',
     piston_ram: 'Shoves a hero into walls and other traps.',
     gravity_well: 'Drags nearby heroes together and slows them.',
     whirling_brazier: 'A jet of fire sweeps in a circle.',
@@ -12106,7 +12864,7 @@ button { font-family: var(--font-body); color: var(--text); }
     gilded_idol: 'Fake gold lures heroes off the route.',
     toll_gate: 'Takes back gold from heroes carrying it.',
     beast_cage: 'Releases a strong ghoul. Once per raid.',
-    barricade: 'Blocks heroes until they hack through it.',
+    barricade: 'Blocks heroes until they hack through it. Burns.',
     lodestone: 'Heroes deal 30% less damage.',
     black_mortar: 'Shells the biggest group, through walls.',
     corpse_fuse: 'Explodes when a trap fires or something dies nearby.'
@@ -13297,19 +14055,6 @@ button { font-family: var(--font-body); color: var(--text); }
 
   function floorLayer(ctx, state, info) {
     var T = info.T, t = info.t;
-    raidTraps(state, 'flood_sluice').forEach(function (tp) {
-      var s = tp.data.r;
-      if (!(s.dryT > 0) || !s.water) return;
-      var fade = Math.min(1, s.dryT / 2);
-      s.water.forEach(function (w, i) {
-        var wob = Math.sin(t * 2.4 + i * 1.7);
-        ctx.fillStyle = 'rgba(46,104,158,' + (0.42 * fade) + ')';
-        ctx.fillRect(w.x * T, w.y * T, T, T);
-        ctx.fillStyle = 'rgba(150,205,240,' + (0.3 * fade) + ')';
-        ctx.fillRect(w.x * T + 4 + wob * 3, w.y * T + 9, 12, 1);
-        ctx.fillRect(w.x * T + 15 - wob * 3, w.y * T + 21, 10, 1);
-      });
-    });
   }
 
   function objectsLayer(ctx, state, info) {
@@ -13892,8 +14637,8 @@ button { font-family: var(--font-body); color: var(--text); }
     },
     burst: function (preset, x, y, n, opts) { for (var i = 0; i < n; i++) parts.emit(preset, x, y, opts); },
     /* Floating combat text. */
-    text: function (x, y, str, color, big) {
-      return add({ x: x * T + r(-4, 4), y: y * T - 10, vx: 0, vy: -26, drag: 1.5, life: big ? 1.5 : 0.9, text: str, color: color || '#e8dcc8', size: big ? 13 : 10, mode: 'text' });
+    text: function (x, y, str, color, big, size) {
+      return add({ x: x * T + r(-4, 4), y: y * T - 10, vx: 0, vy: -26, drag: 1.5, life: big ? 1.5 : 0.9, text: str, color: color || '#e8dcc8', size: size || (big ? 13 : 10), mode: 'text' });
     },
     /* A streak between two points (arrows, bolts). */
     streak: function (x0, y0, x1, y1, color, opts) {
@@ -14010,7 +14755,8 @@ button { font-family: var(--font-body); color: var(--text); }
     else if (type === 'poison') parts.burst('poison', t.x, t.y - 0.1, 4);
     else if (type === 'shadow') parts.burst('shadow', t.x, t.y - 0.2, 7);
     else if (type === 'holy') parts.burst('holy', t.x, t.y - 0.2, 7);
-    if (e.amount >= 0.5) parts.text(t.x, t.y - 0.5, String(Math.round(e.amount)), col, e.amount >= 30);
+    // the size of a number is the size of the hit: bigger the more pips it takes off
+    if (e.amount >= 0.5) parts.text(t.x, t.y - 0.5, String(Math.round(e.amount)), col, e.amount >= 25, e.amount >= 75 ? 20 : e.amount >= 50 ? 17 : e.amount >= 25 ? 14 : 11);
   }
   on('heroDamaged', damageFx);
   on('minionDamaged', damageFx);
@@ -14711,12 +15457,13 @@ button { font-family: var(--font-body); color: var(--text); }
   }
 
   /* ------------------------------------------------------------------ overlays */
+  var barT = 0, barDt = 0;
   function drawBars(state) {
     var raid = state.raid; if (!raid) return;
     raid.all.forEach(function (e) {
       if (!TT.isActive(e)) return;
       var frac = e.hp / e.maxHp;
-      if (frac >= 0.999 && e.kind !== 'boss' && !e.status.burn && !e.status.poison) return;
+      if (e.kind !== 'boss' && R.drawPips) { R.drawPips(ctx, e, barT, barDt); return; }
       var w = e.kind === 'boss' ? 34 : 20, x = e.rx * T - w / 2, y = e.ry * T - (e.kind === 'boss' ? 40 : 27);
       ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(x - 1, y - 1, w + 2, 5);
       ctx.fillStyle = e.kind === 'hero' ? '#c0402a' : e.kind === 'boss' ? '#9a6aff' : '#6fbf4a';
@@ -14863,6 +15610,7 @@ button { font-family: var(--font-body); color: var(--text); }
       drawKnownObjects(state, t);
       drawRims(state, t);
       if (TT.particles) TT.particles.drawGlow(ctx);
+      barT = t; barDt = dt;
       drawBars(state);
       drawSelection(state, t);
       drawHover(state, t);
@@ -15299,6 +16047,287 @@ button { font-family: var(--font-body); color: var(--text); }
     if (e.name === 'title' && J.enabled) embers(scr);
     if (e.name === 'aftermath') Array.prototype.forEach.call(scr.querySelectorAll('.sm-stat .v'), countUp);
   });
+})(window.TT);
+
+</script>
+<script>/* src/render/art_elements.js */
+/*
+ * Tiny Tyrant — src/render/art_elements.js
+ * The picture language: one small icon per element, surfaces on the floor, health pips and marks over heads,
+ * and the glowing links between traps that will react. Reads the sim, never changes it.
+ *
+ * TT.icons: draw(c, id, cx, cy, size), el(id, size) -> canvas
+ * TT.pips:  layout(maxHp) -> {gold, red}, draw(c, e, x, y)  one red pip = 25 health, one gold pip = 100
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  var E = TT.elements, T = TT.TILE;
+
+  /* ------------------------------------------------------------------ icons */
+  function drop(c, x, y, s, fill) {
+    c.fillStyle = fill;
+    c.beginPath();
+    c.moveTo(x, y - s);
+    c.bezierCurveTo(x + s * 0.2, y - s * 0.4, x + s * 0.72, y - s * 0.05, x + s * 0.72, y + s * 0.3);
+    c.arc(x, y + s * 0.3, s * 0.72, 0, Math.PI);
+    c.bezierCurveTo(x - s * 0.72, y - s * 0.05, x - s * 0.2, y - s * 0.4, x, y - s);
+    c.fill();
+  }
+  var DRAW = {
+    fire: function (c, x, y, s) {
+      drop(c, x, y, s, '#ff7a20');
+      drop(c, x, y + s * 0.35, s * 0.5, '#ffe080');
+    },
+    water: function (c, x, y, s) {
+      drop(c, x, y, s, '#4a9ee8');
+      c.fillStyle = '#d0ecff'; c.fillRect(x - s * 0.35, y + s * 0.1, s * 0.2, s * 0.35);
+    },
+    oil: function (c, x, y, s) {
+      drop(c, x, y, s, '#1a1410');
+      c.strokeStyle = '#b08a58'; c.lineWidth = Math.max(1, s * 0.16); c.stroke();
+    },
+    blood: function (c, x, y, s) { drop(c, x, y, s, '#d02a3a'); },
+    frost: function (c, x, y, s) {
+      c.strokeStyle = '#b8ecff'; c.lineWidth = Math.max(1, s * 0.24); c.lineCap = 'round';
+      for (var i = 0; i < 3; i++) {
+        var a = i * Math.PI / 3;
+        c.beginPath(); c.moveTo(x - Math.cos(a) * s, y - Math.sin(a) * s); c.lineTo(x + Math.cos(a) * s, y + Math.sin(a) * s); c.stroke();
+      }
+    },
+    storm: function (c, x, y, s) {
+      c.fillStyle = '#f4ee50';
+      c.beginPath();
+      c.moveTo(x + s * 0.25, y - s); c.lineTo(x - s * 0.6, y + s * 0.15); c.lineTo(x - s * 0.05, y + s * 0.15);
+      c.lineTo(x - s * 0.25, y + s); c.lineTo(x + s * 0.6, y - s * 0.2); c.lineTo(x + s * 0.05, y - s * 0.2);
+      c.closePath(); c.fill();
+    },
+    poison: function (c, x, y, s) {
+      c.fillStyle = '#8fd14f';
+      c.beginPath(); c.arc(x, y - s * 0.15, s * 0.75, 0, 6.283); c.fill();
+      c.fillRect(x - s * 0.42, y + s * 0.3, s * 0.84, s * 0.6);
+      c.fillStyle = '#16200c';
+      c.beginPath(); c.arc(x - s * 0.3, y - s * 0.2, s * 0.2, 0, 6.283); c.arc(x + s * 0.3, y - s * 0.2, s * 0.2, 0, 6.283); c.fill();
+    },
+    gas: function (c, x, y, s) {
+      c.fillStyle = '#a8d860';
+      [[-0.45, 0.15, 0.5], [0.45, 0.15, 0.5], [0, -0.3, 0.6]].forEach(function (b) {
+        c.beginPath(); c.arc(x + b[0] * s, y + b[1] * s, b[2] * s, 0, 6.283); c.fill();
+      });
+    },
+    web: function (c, x, y, s) {
+      c.strokeStyle = '#e4dece'; c.lineWidth = Math.max(1, s * 0.13);
+      for (var i = 0; i < 4; i++) {
+        var a = i * Math.PI / 4;
+        c.beginPath(); c.moveTo(x - Math.cos(a) * s, y - Math.sin(a) * s); c.lineTo(x + Math.cos(a) * s, y + Math.sin(a) * s); c.stroke();
+      }
+      c.beginPath(); c.arc(x, y, s * 0.55, 0, 6.283); c.stroke();
+    },
+    shadow: function (c, x, y, s) {
+      c.fillStyle = '#a97cff';
+      c.beginPath(); c.arc(x, y, s * 0.9, Math.PI * 0.35, Math.PI * 1.65); c.arc(x + s * 0.45, y, s * 0.68, Math.PI * 1.6, Math.PI * 0.4, true); c.fill();
+    },
+    iron: function (c, x, y, s) {
+      c.fillStyle = '#d4cec4';
+      c.beginPath(); c.moveTo(x, y - s); c.lineTo(x + s * 0.3, y + s * 0.35); c.lineTo(x - s * 0.3, y + s * 0.35); c.closePath(); c.fill();
+      c.fillRect(x - s * 0.55, y + s * 0.35, s * 1.1, s * 0.22);
+      c.fillRect(x - s * 0.12, y + s * 0.55, s * 0.24, s * 0.42);
+    },
+    sound: function (c, x, y, s) {
+      c.strokeStyle = '#f0d8a8'; c.lineWidth = Math.max(1, s * 0.2);
+      [0.35, 0.65, 0.95].forEach(function (r) { c.beginPath(); c.arc(x - s * 0.4, y, r * s, -0.8, 0.8); c.stroke(); });
+    },
+    wood: function (c, x, y, s) {
+      c.fillStyle = '#9a6a34'; c.fillRect(x - s, y - s * 0.45, s * 2, s * 0.9);
+      c.fillStyle = '#d8b078'; c.beginPath(); c.arc(x + s * 0.72, y, s * 0.36, 0, 6.283); c.fill();
+    },
+    steam: function (c, x, y, s) {
+      c.strokeStyle = '#d8e8f0'; c.lineWidth = Math.max(1, s * 0.22); c.lineCap = 'round';
+      [-0.5, 0, 0.5].forEach(function (o) {
+        c.beginPath(); c.moveTo(x + o * s, y + s * 0.9);
+        c.bezierCurveTo(x + (o - 0.4) * s, y + s * 0.3, x + (o + 0.4) * s, y - s * 0.3, x + o * s, y - s * 0.9);
+        c.stroke();
+      });
+    }
+  };
+  var IC = TT.icons = {
+    draw: function (c, id, x, y, size) {
+      var f = DRAW[id]; if (!f) return;
+      c.save(); f(c, x, y, size); c.restore();
+    },
+    el: function (id, size) {
+      var cv = document.createElement('canvas'), d = 2;
+      cv.width = cv.height = size * d;
+      cv.style.width = cv.style.height = size + 'px';
+      cv.className = 'tt-icon';
+      var c = cv.getContext('2d');
+      IC.draw(c, id, size * d / 2, size * d / 2, size * d * 0.42);
+      return cv;
+    }
+  };
+
+  /* ------------------------------------------------------------------ health pips */
+  var P = TT.pips = {
+    layout: function (maxHp) {
+      var gold = Math.floor(maxHp / 100), rest = maxHp - gold * 100;
+      return { gold: gold, red: Math.ceil(rest / E.HEART) };
+    },
+    /* A row of pips: full colour for health left, pale for what was just lost, dark for what is gone. */
+    draw: function (c, e, cx, top) {
+      var lay = P.layout(e.maxHp), n = lay.gold + lay.red, perRow = 8, pw = e.kind === 'minion' ? 2 : 3, gap = 1, ph = 4;
+      var rows = Math.ceil(n / perRow), w = Math.min(n, perRow) * (pw + gap) - gap, x0 = cx - w / 2;
+      var hp = Math.max(0, e.hp), ghost = e.anim.ghost != null ? e.anim.ghost : hp, spent = 0;
+      var base = e.kind === 'hero' ? (e.data.nemesis ? '#ff9a30' : '#d8402a') : '#6fbf4a';
+      c.fillStyle = 'rgba(0,0,0,0.8)';
+      c.fillRect(x0 - 1, top - 1 - (rows - 1) * (ph + 1), w + 2, rows * (ph + 1) + 1);
+      for (var i = 0; i < n; i++) {
+        var worth = i < lay.gold ? 100 : E.HEART;
+        var row = Math.floor(i / perRow), col = i % perRow, px = x0 + col * (pw + gap), py = top - row * (ph + 1);
+        var f = Math.min(1, Math.max(0, (hp - spent) / worth)), g = Math.min(1, Math.max(0, (ghost - spent) / worth));
+        c.fillStyle = '#2a2024'; c.fillRect(px, py, pw, ph);
+        if (g > f) { c.fillStyle = '#fff6e0'; c.fillRect(px, py, pw * g, ph); }
+        if (f > 0) { c.fillStyle = i < lay.gold ? '#ffd24a' : base; c.fillRect(px, py, pw * f, ph); }
+        spent += worth;
+      }
+      return top - (rows - 1) * (ph + 1);
+    }
+  };
+  TT.render.drawPips = function (ctx, e, t, dt) {
+    var a = e.anim;
+    if (a.ghost == null || a.ghost < e.hp) a.ghost = e.hp;
+    else a.ghost = Math.max(e.hp, a.ghost - Math.max(e.maxHp * 0.5, 40) * Math.max(dt || 0, 0.016));
+    var top = P.draw(ctx, e, e.rx * T, e.ry * T - 27);
+    if (e.kind !== 'hero') return;
+    var marks = E.marks(e, TT.state && TT.state.raid ? TT.state.raid.t : 0), mx = e.rx * T - (marks.length - 1) * 4.5;
+    marks.forEach(function (id, i) { IC.draw(ctx, id, mx + i * 9, top - 6, 3.6); });
+    if (e.data.nemesis) {
+      // a crown, one point per rank
+      var cx = e.rx * T, cy = top - (marks.length ? 15 : 7), n = e.data.nemesis;
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillRect(cx - n * 2, cy + 3, n * 4, 2);
+      for (var k = 0; k < n; k++) { ctx.beginPath(); ctx.moveTo(cx - n * 2 + k * 4, cy + 3); ctx.lineTo(cx - n * 2 + k * 4 + 2, cy - 1); ctx.lineTo(cx - n * 2 + k * 4 + 4, cy + 3); ctx.fill(); }
+    }
+  };
+
+  /* ------------------------------------------------------------------ surfaces */
+  var LOOK = {
+    water: 'rgba(46,110,170,', oil: 'rgba(30,20,14,', ice: 'rgba(170,225,250,', fire: 'rgba(255,110,30,',
+    gas: 'rgba(130,190,70,', dust: 'rgba(170,150,120,', web: 'rgba(225,220,205,', blood: 'rgba(130,16,26,',
+    toxic: 'rgba(90,150,40,', steam: 'rgba(215,230,240,', cloud: 'rgba(90,90,130,'
+  };
+  var CLOUDS = { gas: 1, steam: 1, cloud: 1, dust: 1 };
+  function floorLayer(ctx, state, info) {
+    var raid = state.raid;
+    if (!raid || !raid.surf || state.phase !== 'raid') return;
+    var t = info.t, keys = Object.keys(raid.surf);
+    for (var i = 0; i < keys.length; i++) {
+      var c = raid.surf[keys[i]];
+      if (CLOUDS[c.s]) continue;
+      var p = keys[i].split(','), x = +p[0] * T, y = +p[1] * T, fade = Math.min(1, c.t / 1.5), wob = Math.sin(t * 2.4 + x + y);
+      ctx.fillStyle = LOOK[c.s] + (0.6 * fade) + ')';
+      ctx.fillRect(x, y, T, T);
+      if (c.s === 'water' || c.s === 'toxic') {
+        ctx.fillStyle = (c.s === 'water' ? 'rgba(170,220,250,' : 'rgba(190,240,110,') + (0.4 * fade) + ')';
+        ctx.fillRect(x + 4 + wob * 3, y + 9, 12, 1); ctx.fillRect(x + 15 - wob * 3, y + 21, 10, 1);
+      } else if (c.s === 'oil') {
+        ctx.fillStyle = 'rgba(190,150,90,' + (0.35 * fade) + ')';
+        ctx.fillRect(x + 8 + wob * 2, y + 12, 8, 1); ctx.fillRect(x + 18 - wob * 2, y + 22, 6, 1);
+      } else if (c.s === 'ice') {
+        ctx.strokeStyle = 'rgba(240,250,255,' + (0.6 * fade) + ')'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x + 4, y + 8); ctx.lineTo(x + 15, y + 18); ctx.lineTo(x + 27, y + 12); ctx.moveTo(x + 15, y + 18); ctx.lineTo(x + 12, y + 28); ctx.stroke();
+      } else if (c.s === 'web') {
+        ctx.strokeStyle = 'rgba(240,235,220,' + (0.55 * fade) + ')'; ctx.lineWidth = 0.7;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + T, y + T); ctx.moveTo(x + T, y); ctx.lineTo(x, y + T); ctx.moveTo(x + T / 2, y); ctx.lineTo(x + T / 2, y + T); ctx.stroke();
+      }
+    }
+  }
+  function glowLayer(ctx, state, info) {
+    var raid = state.raid;
+    if (!raid || !raid.surf || state.phase !== 'raid') return;
+    var t = info.t, keys = Object.keys(raid.surf), P_ = TT.particles;
+    for (var i = 0; i < keys.length; i++) {
+      var c = raid.surf[keys[i]], p = keys[i].split(','), tx = +p[0], ty = +p[1], x = tx * T, y = ty * T;
+      var fade = Math.min(1, c.t / 1.5), pulse = 0.5 + 0.5 * Math.sin(t * 5 + tx * 1.7 + ty);
+      if (c.s === 'fire') {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = 'rgba(255,120,30,' + ((0.3 + 0.2 * pulse) * fade) + ')'; ctx.fillRect(x, y, T, T);
+        ctx.restore();
+        if (P_ && info.dt > 0 && Math.random() < info.dt * 9) P_.emit('flame', tx + 0.5, ty + 0.6, { spread: 0.4 });
+      } else if (CLOUDS[c.s]) {
+        ctx.fillStyle = LOOK[c.s] + ((0.26 + 0.1 * pulse) * fade) + ')';
+        ctx.beginPath(); ctx.arc(x + T / 2 + Math.sin(t + tx) * 3, y + T / 2 + Math.cos(t * 0.8 + ty) * 3, T * 0.72, 0, 6.283); ctx.fill();
+        if (c.s === 'cloud' && pulse > 0.82) {
+          ctx.strokeStyle = 'rgba(245,240,110,0.9)'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.moveTo(x + 8, y + 6); ctx.lineTo(x + 18, y + 14); ctx.lineTo(x + 12, y + 18); ctx.lineTo(x + 22, y + 28); ctx.stroke();
+        }
+      } else {
+        // a faint tint so a surface can always be read, even in the dark
+        ctx.fillStyle = LOOK[c.s] + (0.1 * fade) + ')'; ctx.fillRect(x, y, T, T);
+      }
+      if (c.flash > raid.t) {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = 'rgba(245,240,120,0.75)'; ctx.fillRect(x, y, T, T);
+        ctx.restore();
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ links between traps */
+  var LINK_RANGE = 5.5;
+  function linkTo(ctx, ax, ay, bx, by, rx, t, strong) {
+    var x1 = (ax + 0.5) * T, y1 = (ay + 0.5) * T, x2 = (bx + 0.5) * T, y2 = (by + 0.5) * T;
+    ctx.strokeStyle = rx.color; ctx.lineWidth = strong ? 2.5 : 1.5;
+    ctx.globalAlpha = strong ? 0.95 : 0.55 + 0.2 * Math.sin(t * 3);
+    ctx.setLineDash([4, 5]); ctx.lineDashOffset = -t * 18;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.setLineDash([]);
+    var mx = (x1 + x2) / 2, my = (y1 + y2) / 2, r = (strong ? 11 : 8) + Math.sin(t * 4) * 0.8;
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(8,5,10,0.92)'; ctx.beginPath(); ctx.arc(mx, my, r, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = rx.color; ctx.lineWidth = 1.5; ctx.stroke();
+    IC.draw(ctx, rx.a, mx - r * 0.42, my, r * 0.42);
+    IC.draw(ctx, rx.b, mx + r * 0.42, my, r * 0.42);
+  }
+  function linkLayer(ctx, state, info) {
+    if (state.phase !== 'build' || !E) return;
+    var t = info.t, traps = state.traps, drawn = 0, used = {};
+    for (var i = 0; i < traps.length && drawn < 40; i++) {
+      for (var j = i + 1; j < traps.length && drawn < 40; j++) {
+        var a = traps[i], b = traps[j];
+        if (used[a.uid] >= 2 || used[b.uid] >= 2) continue;   // keeps a crowded corridor readable
+        if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) > LINK_RANGE + 2 || TT.util.dist(a.x, a.y, b.x, b.y) > LINK_RANGE) continue;
+        var rx = E.pair(TT.defs.traps[a.id], TT.defs.traps[b.id]);
+        if (rx) { linkTo(ctx, a.x, a.y, b.x, b.y, rx, t, false); drawn++; used[a.uid] = (used[a.uid] || 0) + 1; used[b.uid] = (used[b.uid] || 0) + 1; }
+      }
+    }
+    // a small corner icon on every trap saying what it is made of
+    traps.forEach(function (tp) {
+      var toks = E.tokens(TT.defs.traps[tp.id]);
+      if (!toks.length) return;
+      var ix = (tp.x + 1) * T - 6, iy = tp.y * T + 6;
+      ctx.fillStyle = 'rgba(8,5,10,0.85)'; ctx.beginPath(); ctx.arc(ix, iy, 5.5, 0, 6.283); ctx.fill();
+      IC.draw(ctx, toks[toks.length - 1], ix, iy, 3.6);
+    });
+    // choosing a trap: every trap it would react with lights up, and the spot under the finger shows the link
+    var gh = TT.render.ghost, hv = TT.render.hover;
+    if (gh && gh.tool && gh.tool.type === 'trap') {
+      var def = TT.defs.traps[gh.tool.id];
+      traps.forEach(function (tp) {
+        var rx2 = E.pair(def, TT.defs.traps[tp.id]);
+        if (!rx2) return;
+        ctx.globalAlpha = 0.6 + 0.35 * Math.sin(t * 6);
+        ctx.strokeStyle = rx2.color; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc((tp.x + 0.5) * T, (tp.y + 0.5) * T, T * 0.62, 0, 6.283); ctx.stroke();
+        ctx.globalAlpha = 1;
+        if (hv && TT.util.dist(hv.x, hv.y, tp.x, tp.y) <= LINK_RANGE) linkTo(ctx, hv.x, hv.y, tp.x, tp.y, rx2, t, true);
+      });
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  TT.render.addLayer('floor', floorLayer);
+  TT.render.addLayer('overlay', glowLayer);
+  TT.render.addLayer('overlay', linkLayer);
 })(window.TT);
 
 </script>
@@ -17922,6 +18951,8 @@ button { font-family: var(--font-body); color: var(--text); }
         var nm = ui.el('div', 'nm', ui.esc(h.name), el);
         var sub = ui.el('div', 'sub', 'L' + (h.level || 1) + ' ' + ui.esc(h.def.name) + (h.traits && h.traits.length ? ' &middot; ' + ui.esc(h.traits.map(function (t) { var d = TT.HERO_TRAITS[t]; return d ? d.name : t; }).join(', ')) : ''), el);
         var bar = ui.el('i', null, null, ui.el('div', 'bar', null, el));
+        bar.parentNode.style.setProperty('--tick', (2500 / h.maxHp).toFixed(1) + '%');
+        if (h.data.nemesis) el.classList.add('nemesis');
         el.addEventListener('click', function () {
           if (TT.isActive(h)) { TT.camera.centerOnTile(Math.floor(h.x), Math.floor(h.y), true); TT.render.selected = h.uid; }
         });
@@ -18098,7 +19129,7 @@ button { font-family: var(--font-body); color: var(--text); }
       case 'trap':
         def = TT.defs.traps[tool.id]; if (!def) return null;
         cost = st ? TT.game.costOf('traps', def.id, st) : def.cost;
-        h = '<h4>' + ui.esc(def.name) + '</h4><div class="desc">' + ui.esc(def.desc) + '</div>' + statRows([
+        h = '<h4>' + ui.esc(def.name) + '</h4><div class="desc">' + ui.esc(TT.trapbook.blurb(def)) + '</div>' + (ui.clarity ? ui.clarity.trapTip(def, st) : '') + statRows([
           ['Damage', def.dmg != null ? trapDmg(def, st) : (def.noDamage || /no damage/i.test(def.effectText || '') ? null : dmgSpan(def.damageType))],
           ['Rearms', def.uses ? 'once per raid' : (def.cooldown != null ? def.cooldown + 's' : '3s')],
           ['Trigger', def.placement === 'wall' ? 'wall-mounted' : (def.trigger || 'step')],
@@ -18130,6 +19161,7 @@ button { font-family: var(--font-body); color: var(--text); }
     b.appendChild(TT.sprites.icon(icon, 34));
     ui.el('span', 'nm', ui.esc(name), b);
     var c = ui.el('span', 'cost', '', b);
+    if (tool.type === 'trap' && ui.clarity) ui.clarity.decorateTool(b, tool);
     b.addEventListener('click', function () { ui.click(); B.setTool(same(B.tool, tool) ? null : tool); });
     ui.tip(b, function () {
       var d = tool.type === 'trap' && TT.defs.traps[tool.id];
@@ -21276,6 +22308,7 @@ button { font-family: var(--font-body); color: var(--text); }
       var cost = TT.game.costOf('traps', id, state);
       ui.el('div', 'price', cost.gold + ' gold' + (cost.souls ? ', ' + cost.souls + ' soul' + (cost.souls > 1 ? 's' : '') : ''), c);
     }
+    if (ui.clarity) ui.clarity.decorateCard(c, def, state);
     c.addEventListener('click', function () {
       ui.click();
       B.pick(state, id);
@@ -21521,6 +22554,257 @@ button { font-family: var(--font-body); color: var(--text); }
       if (askedFull || fsActive()) return;
       if (ev.target && ev.target.closest && ev.target.closest('.tt-btn')) { askedFull = true; enterFull(); }
     }, true);
+  });
+})(window.TT);
+
+</script>
+<script>/* src/ui/clarity.js */
+/*
+ * Tiny Tyrant — src/ui/clarity.js
+ * One unit for everything: a red pip is 25 health, and a trap's power is shown in the same pips, so a
+ * three-pip trap takes three pips off a hero. Icons say what reacts with what. Also the reaction chart, the
+ * wanted card, the nemesis moments, reaction words in the world and the "best traps" list after a raid.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  var ui = TT.ui, E = TT.elements, N = TT.nemesis, IC = TT.icons, J = TT.juice;
+  var C = ui.clarity = {};
+  var wanted = null, chartBtn = null, chart = null, wantedKey = '';
+
+  var CSS = [
+    '.tt-icon{display:inline-block;vertical-align:middle}',
+    '.tt-pow{display:flex;flex-wrap:wrap;justify-content:center;gap:1px;margin:2px auto 0;max-width:46px}',
+    '.tt-pow i{display:block;width:5px;height:6px;background:#d8402a;border-radius:1px}',
+    '.tool{position:relative}',
+    '.tool .tt-el{position:absolute;top:1px;left:1px;display:flex;pointer-events:none}',
+    '.tt-tipline{display:flex;align-items:center;gap:6px;margin:5px 0 0;font-size:12px;color:var(--text-dim)}',
+    '.tt-tipline .tt-pow{margin:0;max-width:none}',
+    '.tt-combos{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:6px}',
+    '.tt-combo{display:inline-flex;align-items:center;gap:2px;font-size:11px;color:var(--text)}',
+    '.tt-combo b{font-weight:normal;margin-left:3px}',
+    '#tt-book .tt-combos{justify-content:center}',
+    '#tt-chartbtn{position:absolute;left:10px;top:64px;z-index:6;width:44px;height:44px;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;background:var(--panel);border:1px solid var(--edge);border-radius:4px}',
+    '#tt-chartbtn:hover{border-color:#e9a55f}',
+    '#tt-chart{position:absolute;inset:0;z-index:42;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;background:rgba(5,3,7,.9)}',
+    '#tt-chart h2{margin:0;font-weight:normal;letter-spacing:.2em;text-transform:uppercase;font-size:20px;color:var(--text)}',
+    '#tt-chart .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px 20px;width:min(640px,100%);max-height:70vh;overflow:auto}',
+    '#tt-chart .rx{display:flex;align-items:center;gap:5px;font-size:15px;color:var(--text)}',
+    '#tt-chart .rx span{color:var(--text-faint)}',
+    '#tt-chart .key{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dim)}',
+    '#tt-wanted{position:absolute;right:10px;top:64px;z-index:6;width:150px;padding:8px;text-align:center;background:#2a1d10;border:2px solid #b08a40;border-radius:3px;color:#f0dcae;box-shadow:0 0 18px rgba(255,170,60,.35);cursor:default}',
+    '#tt-wanted .w{font-size:11px;letter-spacing:.3em;color:#ffcf7a}',
+    '#tt-wanted .who{font-size:13px;margin:2px 0}',
+    '#tt-wanted .ln{display:flex;align-items:center;justify-content:center;gap:4px;font-size:15px;line-height:1.3}',
+    '#tt-wanted .pay{font-size:13px;color:#ffd24a;margin-top:2px}',
+    '#tt-wanted .one+.one{margin-top:8px;padding-top:6px;border-top:1px solid #6a5024}',
+    '.hero-row.nemesis{border-left:3px solid #ffd24a}.hero-row.nemesis .nm{color:#ffd24a}',
+    '.hero-row .bar{background-image:repeating-linear-gradient(90deg,transparent,transparent calc(var(--tick,20%) - 1px),rgba(0,0,0,.75) calc(var(--tick,20%) - 1px),rgba(0,0,0,.75) var(--tick,20%))}',
+    '.tt-best{width:min(380px,90vw);margin:0 auto 16px}',
+    '.tt-best .tr{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:13px;color:var(--text)}',
+    '.tt-best .bar{flex:1;height:8px;background:#241820;border-radius:2px;overflow:hidden}',
+    '.tt-best .bar i{display:block;height:100%;background:linear-gradient(90deg,#c04a10,#ffcf7a);animation:ttfill .8s ease-out}',
+    '.tt-best .n{width:42px;text-align:right;color:var(--text-dim)}',
+    '.tt-rxs{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 14px;margin:0 0 14px;font-size:14px;color:#ffcf7a}',
+    '.tt-note{font-size:15px;letter-spacing:.06em;margin:0 0 8px}',
+    '.tt-note.good{color:#ffd24a}.tt-note.bad{color:#ff9a60}'
+  ].join('');
+
+  /* ------------------------------------------------------------------ pips and icons in menus */
+  function powerRow(def, state) {
+    var box = document.createElement('div');
+    box.className = 'tt-pow';
+    var p = E.power(def, state);
+    if (!p) return box;
+    var n = Math.min(10, E.hearts(p));
+    for (var i = 0; i < n; i++) box.appendChild(document.createElement('i'));
+    return box;
+  }
+  function combosHtml(def) {
+    var seen = {}, out = '';
+    E.partners(def).forEach(function (p) {
+      var key = p.with + p.reaction.name;
+      if (seen[key]) return;
+      seen[key] = 1;
+      out += '<span class="tt-combo">' + iconHtml(p.own) + '+' + iconHtml(p.with) + '<b style="color:' + p.reaction.color + '">' + ui.esc(p.reaction.name) + '</b></span>';
+    });
+    return out ? '<div class="tt-combos">' + out + '</div>' : '';
+  }
+  var iconUrls = {};
+  function iconHtml(id) {
+    if (!iconUrls[id]) iconUrls[id] = IC.el(id, 16).toDataURL();
+    return '<img class="tt-icon" width="16" height="16" alt="" src="' + iconUrls[id] + '">';
+  }
+  C.decorateTool = function (btn, tool) {
+    var def = TT.defs.traps[tool.id];
+    if (!def) return;
+    var toks = E.tokens(def);
+    if (toks.length) {
+      var el = document.createElement('div');
+      el.className = 'tt-el';
+      toks.slice(0, 2).forEach(function (t) { el.appendChild(IC.el(t, 13)); });
+      btn.appendChild(el);
+    }
+    btn.appendChild(powerRow(def, TT.state));
+  };
+  C.trapTip = function (def, state) {
+    var p = E.power(def, state), wrap = document.createElement('div');
+    wrap.className = 'tt-tipline';
+    wrap.appendChild(powerRow(def, state));
+    return (p ? wrap.outerHTML : '') + combosHtml(def);
+  };
+  C.decorateCard = function (card, def, state) {
+    var before = card.querySelector('.price');
+    var holder = document.createElement('div');
+    holder.innerHTML = C.trapTip(def, state);
+    while (holder.firstChild) card.insertBefore(holder.firstChild, before);
+  };
+
+  /* ------------------------------------------------------------------ the chart */
+  function showChart() {
+    if (chart) return;
+    chart = ui.el('div', null, null, document.getElementById('ui'));
+    chart.id = 'tt-chart';
+    ui.el('h2', null, 'Combos', chart);
+    var grid = ui.el('div', 'grid', null, chart);
+    E.REACTIONS.forEach(function (r) {
+      var row = ui.el('div', 'rx', null, grid);
+      row.appendChild(IC.el(r.a, 22));
+      ui.el('span', null, '+', row);
+      row.appendChild(IC.el(r.b, 22));
+      ui.el('b', null, ui.esc(r.name), row).style.cssText = 'font-weight:normal;margin-left:6px;color:' + r.color;
+    });
+    var key = ui.el('div', 'key', null, chart);
+    var pip = document.createElement('i');
+    pip.style.cssText = 'display:inline-block;width:6px;height:8px;background:#d8402a';
+    key.appendChild(pip);
+    ui.el('span', null, '= 25', key);
+    var gold = document.createElement('i');
+    gold.style.cssText = 'display:inline-block;width:6px;height:8px;background:#ffd24a;margin-left:14px';
+    key.appendChild(gold);
+    ui.el('span', null, '= 100', key);
+    var close = ui.el('button', 'tt-btn', 'Back', chart);
+    close.addEventListener('click', function () { ui.click(); chart.remove(); chart = null; });
+  }
+
+  /* ------------------------------------------------------------------ wanted */
+  function syncWanted() {
+    if (!wanted) return;
+    var st = TT.state, on = st && st.phase === 'build' && ui.hud.visible;
+    var next = on ? N.upNext(st) : [];
+    if (chartBtn) chartBtn.classList.toggle('hidden', !on);
+    var k = next.map(function (r) { return r.heroId + r.rank + r.resist.join(); }).join('|');
+    if (k !== wantedKey) {
+      wantedKey = k;
+      wanted.innerHTML = '';
+      next.forEach(function (r) {
+        var o = ui.el('div', 'one', null, wanted), b = N.bounty(r);
+        ui.el('div', 'w', 'Wanted', o);
+        var ln0 = ui.el('div', 'who', ui.esc(r.name), o);
+        ln0.title = '';
+        var s = '';
+        for (var i = 0; i < r.rank; i++) s += '&#9819;';
+        ui.el('div', 'ln', s, o).style.color = '#ffd24a';
+        var res = ui.el('div', 'ln', null, o);
+        res.appendChild(document.createTextNode('\u{1F6E1}'));
+        r.resist.forEach(function (t) { res.appendChild(IC.el(E.elementOfType(t) || 'iron', 18)); });
+        var weak = ui.el('div', 'ln', null, o);
+        weak.appendChild(document.createTextNode('\u{1F3AF}'));
+        weak.appendChild(IC.el(E.elementOfType(r.weak) || 'iron', 18));
+        ui.el('div', 'pay', '+' + b.gold + ' gold', o);
+      });
+    }
+    wanted.classList.toggle('hidden', !next.length);
+  }
+
+  /* ------------------------------------------------------------------ the moments */
+  function P() { return TT.particles; }
+  var SOUND = { Inferno: 'trapFire', 'Flash Fire': 'trapFire', Explosion: 'trapCollapse', Steam: 'trapGas', 'Shock Pool': 'trapHoly', 'Blood Arc': 'trapHoly', 'Storm Cloud': 'trapHoly', 'Deep Freeze': 'trapDetect', Shatter: 'trapSpikes', 'Ice Burst': 'trapSpikes', 'Thermal Crack': 'trapSpikes', 'Tainted Pool': 'trapGas', Plague: 'trapGas', Feast: 'trapShadow', 'Blazing Wall': 'trapFire' };
+  TT.events.on('reaction', function (e) {
+    if (!e || e.state !== TT.state || !P()) return;
+    var color = e.color || '#ffe0a0', p = P();
+    p.text(e.x, e.y - 0.7, e.name.toUpperCase() + (e.power ? '!' : ''), color, e.power >= 1, e.power >= 3 ? 20 : e.power >= 2 ? 16 : 12);
+    if (!e.power) return;
+    if (J && J.enabled) {
+      p.ring(e.x, e.y, 0.8 + e.power * 0.5, color, 0.45);
+      p.burst('spark', e.x, e.y, 8 + e.power * 5, { color: color });
+      if (TT.lighting && TT.lighting.flash) TT.lighting.flash(e.x, e.y, 2 + e.power, color, 0.5);
+      if (e.power >= 2) TT.camera.shake(1 + e.power, 0.2);
+      var seen = e.state.raid && (e.state.raid.rxBanner || (e.state.raid.rxBanner = {}));
+      if (seen && !seen[e.name] && e.power >= 2) { seen[e.name] = 1; J.banner(e.name, 'streak'); }
+    }
+    if (TT.audio && SOUND[e.name]) TT.audio.play(SOUND[e.name], { x: e.x, y: e.y });
+  });
+  TT.events.on('nemesisArrives', function (e) {
+    if (e.state !== TT.state || !J || !J.enabled) return;
+    J.banner(e.rec.name + ' returns', 'name');
+    J.flash('rgba(255,170,40,.8)', 0.5);
+    TT.camera.shake(5, 0.4);
+  });
+  TT.events.on('nemesisSlain', function (e) {
+    if (e.state !== TT.state || !J) return;
+    J.banner(e.rec.name + ' is dead', 'name');
+    J.flash('rgba(255,210,90,.9)', 0.8);
+    J.confetti();
+    J.coins(e.hero.x, e.hero.y, 'gold', 8);
+    J.coins(e.hero.x, e.hero.y, 'soul', e.souls);
+    TT.camera.shake(9, 0.6);
+    if (P()) P().text(e.hero.x, e.hero.y - 1.1, '+' + e.gold + ' GOLD', '#ffd24a', true, 18);
+  });
+
+  /* ------------------------------------------------------------------ after a raid */
+  var NOTES = {
+    new: function (n) { return ['bad', n.name + ' got away. They will be back.']; },
+    risen: function (n) { return ['bad', n.name + ' crawled out of the grave.']; },
+    rank: function (n) { return ['bad', n.name + ' escaped again. Rank ' + n.rank + '.']; },
+    slain: function (n) { return ['good', n.name + ' slain! +' + n.gold + ' gold, +' + n.souls + ' soul' + (n.souls > 1 ? 's' : '')]; }
+  };
+  TT.events.on('screenShow', function (e) {
+    if (e.name !== 'aftermath') return;
+    var scr = document.querySelector('.scr'), st = TT.state;
+    var rep = (e.params && e.params.report) || (st && st.lastReport);
+    var row = scr && scr.querySelector('.sm-stats');
+    if (!rep || !row) return;
+    var anchor = row.nextSibling, parent = row.parentNode;
+    (rep.nemesis || []).forEach(function (n) {
+      var note = NOTES[n.kind] && NOTES[n.kind](n);
+      if (note) { var d = ui.el('div', 'tt-note ' + note[0], ui.esc(note[1]), null); parent.insertBefore(d, row); }
+    });
+    var names = Object.keys(rep.reactions || {});
+    if (names.length) {
+      var rx = document.createElement('div');
+      rx.className = 'tt-rxs';
+      names.sort(function (a, b) { return rep.reactions[b] - rep.reactions[a]; }).slice(0, 5).forEach(function (n) {
+        ui.el('span', null, ui.esc(n) + ' &times;' + rep.reactions[n], rx);
+      });
+      parent.insertBefore(rx, anchor);
+    }
+    var stats = rep.trapStats || {}, list = Object.keys(stats).map(function (uid) { return stats[uid]; })
+      .filter(function (s) { return s.damage >= 1; }).sort(function (a, b) { return b.damage - a.damage; }).slice(0, 3);
+    if (list.length) {
+      var best = document.createElement('div');
+      best.className = 'tt-best';
+      list.forEach(function (s) {
+        var tr = ui.el('div', 'tr', null, best), id = s.id || s.trapId;
+        if (id && TT.defs.traps[id]) tr.appendChild(TT.sprites.icon('trap_' + id, 24));
+        var bar = ui.el('div', 'bar', null, tr);
+        ui.el('i', null, null, bar).style.width = Math.round(100 * s.damage / list[0].damage) + '%';
+        ui.el('div', 'n', String(Math.round(s.damage)), tr);
+      });
+      parent.insertBefore(best, anchor);
+    }
+  });
+
+  TT.events.on('uiReady', function () {
+    var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
+    var root = document.getElementById('ui');
+    wanted = ui.el('div', 'hidden', null, root); wanted.id = 'tt-wanted';
+    chartBtn = ui.el('button', 'hidden', null, root); chartBtn.id = 'tt-chartbtn';
+    chartBtn.setAttribute('aria-label', 'Combos');
+    chartBtn.appendChild(IC.el('fire', 16));
+    chartBtn.appendChild(IC.el('oil', 16));
+    chartBtn.addEventListener('click', function () { ui.click(); showChart(); });
+    setInterval(syncWanted, 300);
   });
 })(window.TT);
 
