@@ -2203,7 +2203,7 @@ button { font-family: var(--font-body); color: var(--text); }
 
   game.grabTreasure = function (state, h) {
     if (h.carried > 0 || h.mode !== 'seek') return 0;
-    var amt = Math.max(0, Math.min(state.hoard, Math.round(H.grabAmount(h, state) || 0)));
+    var amt = Math.round(H.grabAmount(h, state) || 0);
     amt = Math.max(0, Math.min(state.hoard, Math.round(TT.applyFilters('grabAmount', amt, { hero: h, state: state }) || 0)));
     state.hoard -= amt;
     h.carried = amt;
@@ -7835,7 +7835,7 @@ button { font-family: var(--font-body); color: var(--text); }
     lootPerLevel: 5,
     soulsPerTwoLevels: 1,
     eliteSouls: 2,
-    grabBase: 125,
+    grabBase: 105,
     grabPerLevel: 0.15,
     greedyClassGrab: 1.2
   };
@@ -11270,7 +11270,7 @@ button { font-family: var(--font-body); color: var(--text); }
   };
   /* Dread: a ramp in hero toughness as word of the barrow spreads. Heroes no longer retreat when hurt,
      so they die more often and pay out more; the ramp is high to make up for it. */
-  var DREAD_BASE = 1.2, DREAD_STEP = 0.25, DREAD_MAX = 6;
+  var DREAD_BASE = 1.2, DREAD_STEP = 0.21, DREAD_MAX = 5.5;
   SEASON.dread = function (state) {
     var r = Math.max(1, state.raidNum || 1);
     return Math.min(DREAD_MAX, DREAD_BASE + DREAD_STEP * (r - 1));
@@ -11562,7 +11562,7 @@ button { font-family: var(--font-body); color: var(--text); }
       ascension: {},       // bossId -> highest Ascension unlocked (src/systems/ascension.js)
       ascensionPick: {},   // bossId -> Ascension last chosen on the boss-select screen
       tree: {},            // pathId -> tier choices (src/systems/pacts.js)
-      conquest: {}, bossXp: {}, bossTree: {}, stronghold: {},  // src/systems/conquest.js
+      conquest: {}, bossXp: {}, bossTree: {},  // src/systems/conquest.js
       ach: {}, achStats: {}, best: {}                          // src/systems/achievements.js
     };
   }
@@ -13531,7 +13531,7 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.registerBoss({
     id: 'gilded_baron', name: 'The Gilded Baron',
     desc: 'A vampire noble who has never once given anything away.',
-    hp: 800, dmg: 20, damageType: 'physical', startHoard: 1500,
+    hp: 800, dmg: 20, damageType: 'physical', startHoard: 1250,
     speed: 1.5, attackRange: 1.3, attackCooldown: 1, lightRadius: 3.8, lightColor: '#ffd24a', aggroRadius: 4,
     resist: { shadow: 0.3, holy: -0.2 }, immune: {},
     unlocked: false, unlockCost: 220, unlockText: 'Conquer the Gilded Coast, or pay infamy.',
@@ -14084,20 +14084,18 @@ button { font-family: var(--font-body); color: var(--text); }
  *   Conquest   a world map of regions with their own rules. Reach raid 10 for a foothold, which opens the
  *              neighbours; survive all 20 raids to take the region and its permanent reward.
  *   Boss trees each boss levels up with the raids it survives, and each level opens a choice of two.
- *   Stronghold the tunnels of your last reign can be reused, plus a few traps as more regions fall.
  *
  * All of it lives in TT.meta.data: conquest {regionId: {foothold, taken, boss}}, bossXp {bossId: xp},
- * bossTree {bossId: ['a'|'b'|null, ...]}, stronghold {floor: ['x,y'], traps: [{id, x, y, dir}]}.
+ * bossTree {bossId: ['a'|'b'|null, ...]}.
  * A reign keeps its rules in state.ext.region = regionId.
  *
  * TT.conquest API: REGIONS, region(id), status(id), isOpen(id), taken(), picked, pick(id)
  *   bossLevel(id), TREE, treeChoice(bossId, tier), treeChoose(bossId, tier, opt), treeOpen(bossId, tier)
- *   strongholdInfo(), useStronghold
  */
 (function (TT) {
   'use strict';
   var M = TT.meta, H = TT.hooks;
-  var C = TT.conquest = { picked: 'barrow_downs', useStronghold: true };
+  var C = TT.conquest = { picked: 'barrow_downs' };
 
   C.REGIONS = [
     { id: 'barrow_downs', name: 'Barrow Downs', x: 12, y: 54, links: ['black_fen', 'iron_deep'], tier: 0, rule: 'No special rules.', reward: { startGold: 80 }, rewardText: '+80 starting gold' },
@@ -14151,7 +14149,6 @@ button { font-family: var(--font-body); color: var(--text); }
     state.gold += rw.startGold; state.souls += rw.souls;
     state.hoard += rw.hoard; state.startHoard += rw.hoard;
     applyTree(state, o);
-    if (o.stronghold) applyStronghold(state);
     return state;
   }, 20);
 
@@ -14280,45 +14277,6 @@ button { font-family: var(--font-body); color: var(--text); }
     if (e && e.to === 'build' && st && st.raidNum === 4 && C.treeHas(st, 'early_gift') && TT.growth.stage(st) === 0) st.ext.growth.evoOffer = true;
   });
 
-  /* ------------------------------------------------------------------ the stronghold */
-  C.strongholdTraps = function () { return C.taken().length; };
-  C.strongholdInfo = function () {
-    var s = data().stronghold;
-    return s && s.floor && s.floor.length ? { tiles: s.floor.length, traps: Math.min(C.strongholdTraps(), (s.traps || []).length) } : null;
-  };
-  function saveStronghold(state) {
-    var g = state.grid, floor = [];
-    for (var y = 0; y < g.h; y++) for (var x = 0; x < g.w; x++) if (g.tiles[y * g.w + x] === TT.TILES.FLOOR) floor.push(x + ',' + y);
-    var traps = state.traps.filter(function (t) { var d = TT.defs.traps[t.id]; return d && !d.boss && !d.building; })
-      .map(function (t) { return { id: t.id, x: t.x, y: t.y, dir: t.dir, value: TT.defs.traps[t.id].cost.gold }; })
-      .sort(function (a, b) { return b.value - a.value; }).slice(0, 12);
-    data().stronghold = { floor: floor, traps: traps };
-  }
-  /* Tunnels are free and exact; the entrance hall and lair are never touched. */
-  function applyStronghold(state) {
-    var s = data().stronghold, g = state.grid, FL = TT.TILES.FLOOR;
-    if (!s || !s.floor) return;
-    var keep = {}, was = g.tiles.slice ? g.tiles.slice() : Array.prototype.slice.call(g.tiles);
-    s.floor.forEach(function (k) { keep[k] = 1; });
-    for (var y = 1; y < g.h - 1; y++) for (var x = 1; x < g.w - 1; x++) {
-      var i = y * g.w + x, t = g.tiles[i];
-      if (t === FL && !keep[x + ',' + y] && !TT.grid.inEntranceCorridor(g, x, y)) g.tiles[i] = TT.TILES.ROCK;
-      else if (t === TT.TILES.ROCK && keep[x + ',' + y]) g.tiles[i] = FL;
-    }
-    g.rev++;
-    if (!TT.grid.pathExists(state, {})) { for (var j = 0; j < was.length; j++) g.tiles[j] = was[j]; g.rev++; return; }
-    var left = C.strongholdTraps();
-    (s.traps || []).forEach(function (t) {
-      var d = TT.defs.traps[t.id];
-      if (left <= 0 || !d || TT.grid.objectAt(state, t.x, t.y)) return;
-      var wallOk = d.placement === 'wall' ? !TT.grid.isWalkable(g, t.x, t.y) : TT.grid.isWalkable(g, t.x, t.y);
-      if (!wallOk) return;
-      state.traps.push({ uid: TT.uid(), kind: 'trap', id: t.id, x: t.x, y: t.y, dir: t.dir, armed: true, cd: 0, uses: 0, disabled: false, triggers: 0, paid: { gold: 0, souls: 0 }, data: {} });
-      if (state.ext.trapbook) state.ext.trapbook.known[t.id] = true;
-      left--;
-    });
-  }
-
   /* ------------------------------------------------------------------ the end of a reign */
   TT.events.on('runEnd', function (e) {
     var st = e.state;
@@ -14336,7 +14294,6 @@ button { font-family: var(--font-body); color: var(--text); }
     res.taken = cq.taken && !res.wasTaken;
     var rg = BY[r];
     if (res.taken && rg.reward.boss) d.owned['boss:' + rg.reward.boss] = true;
-    if (raids >= 5) saveStronghold(st);
     C.lastResult = res;
     M.save();
     TT.events.emit('unlocksChanged', { key: null });
@@ -16955,6 +16912,127 @@ button { font-family: var(--font-body); color: var(--text); }
 })(window.TT);
 
 </script>
+<script>/* src/render/themes.js */
+/*
+ * Tiny Tyrant — src/render/themes.js
+ * What each boss's dungeon looks like: stone colours, wall details and scattered floor details.
+ * TT.dungeonThemes[bossId] = {floor, lair, rock, deep, bed, face: [top, bottom], rim: 'r,g,b', deco(c, x, y, px, py, r, lair), wall(c, x, y, px, fy, fh)}
+ * r is a steady random 0..1 for the tile. Drawn once into the renderer's tile cache.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  var U = TT.util;
+  function h(x, y, s) { return U.hash2(x, y, s); }
+  function dot(c, x, y, r, col) { c.fillStyle = col; c.beginPath(); c.arc(x, y, r, 0, 6.283); c.fill(); }
+
+  TT.dungeonThemes = {
+    lich: {
+      floor: '#3a3648', lair: '#3a2c50', rock: '#2c2836', deep: '#16131c', bed: '#060509', face: ['#3e3850', '#242030'], rim: '140,255,110',
+      deco: function (c, x, y, px, py, r) {
+        if (r < 0.1) {
+          c.fillStyle = 'rgba(205,198,175,0.55)';
+          c.fillRect(px + 6 + h(x, y, 8) * 16, py + 8 + h(x, y, 9) * 14, 6, 1.5);
+          dot(c, px + 6 + h(x, y, 8) * 16, py + 8 + h(x, y, 9) * 14, 1.5, 'rgba(205,198,175,0.55)');
+        } else if (r < 0.17) {
+          c.strokeStyle = 'rgba(140,255,110,0.28)'; c.lineWidth = 1;
+          c.beginPath(); c.arc(px + 16, py + 16, 6, h(x, y, 7) * 6, h(x, y, 7) * 6 + 3.6); c.stroke();
+        }
+      }
+    },
+    wyrm: {
+      floor: '#40302a', lair: '#52302a', rock: '#32241f', deep: '#1a100c', bed: '#0a0503', face: ['#4a2f26', '#2a1a14'], rim: '255,120,40',
+      deco: function (c, x, y, px, py, r) {
+        if (r < 0.16) {
+          c.strokeStyle = 'rgba(255,130,40,0.65)'; c.lineWidth = 1.2;
+          var cx = px + 4 + h(x, y, 6) * 18, cy = py + 4 + h(x, y, 7) * 18;
+          c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + 5, cy + 4); c.lineTo(cx + 4, cy + 10); c.lineTo(cx + 9, cy + 13); c.stroke();
+        } else if (r < 0.26) {
+          dot(c, px + 8 + h(x, y, 8) * 16, py + 8 + h(x, y, 9) * 16, 3, 'rgba(15,10,8,0.5)');
+        }
+      },
+      wall: function (c, x, y, px, fy, fh) {
+        if (h(x, y, 21) < 0.2) { c.fillStyle = 'rgba(255,110,30,0.55)'; c.fillRect(px + 6 + h(x, y, 22) * 18, fy, 1.5, fh); }
+      }
+    },
+    hollow_king: {
+      floor: '#3c3e4c', lair: '#3e3448', rock: '#2c2e38', deep: '#14151b', bed: '#050608', face: ['#454856', '#282a34'], rim: '230,190,110',
+      deco: function (c, x, y, px, py, r, lair) {
+        if (lair) {
+          c.fillStyle = 'rgba(130,26,44,0.42)'; c.fillRect(px, py + 5, 32, 22);
+          c.fillStyle = 'rgba(230,190,110,0.32)'; c.fillRect(px, py + 5, 32, 1); c.fillRect(px, py + 26, 32, 1);
+        } else if (r < 0.09) {
+          c.strokeStyle = 'rgba(230,190,110,0.3)'; c.lineWidth = 1;
+          c.strokeRect(px + 8, py + 8, 16, 16);
+        }
+      },
+      wall: function (c, x, y, px, fy, fh) {
+        if (x % 5 === 0) { c.fillStyle = 'rgba(130,26,44,0.8)'; c.fillRect(px + 11, fy, 10, fh - 2); c.fillStyle = '#e6be6e'; c.fillRect(px + 11, fy, 10, 1.5); }
+      }
+    },
+    mother_of_webs: {
+      floor: '#343a32', lair: '#32402f', rock: '#262c24', deep: '#111510', bed: '#040604', face: ['#363e32', '#20261e'], rim: '220,214,196',
+      deco: function (c, x, y, px, py, r) {
+        if (r < 0.14) {
+          var a = Math.floor(h(x, y, 6) * 4), sx = a % 2 ? px : px + 32, sy = a > 1 ? py : py + 32, dx = a % 2 ? 1 : -1, dy = a > 1 ? 1 : -1;
+          c.strokeStyle = 'rgba(225,220,205,0.4)'; c.lineWidth = 0.7;
+          c.beginPath();
+          [[18, 0], [14, 14], [0, 18]].forEach(function (o) { c.moveTo(sx, sy); c.lineTo(sx + dx * o[0], sy + dy * o[1]); });
+          c.moveTo(sx + dx * 9, sy); c.lineTo(sx + dx * 7, sy + dy * 7); c.lineTo(sx, sy + dy * 9);
+          c.stroke();
+        } else if (r < 0.2) {
+          for (var i = 0; i < 3; i++) dot(c, px + 10 + i * 4, py + 14 + (i % 2) * 4, 1.8, 'rgba(225,220,190,0.55)');
+        }
+      }
+    },
+    gilded_baron: {
+      floor: '#4a4034', lair: '#54402c', rock: '#352c24', deep: '#191410', bed: '#080604', face: ['#584a38', '#332a20'], rim: '255,210,74',
+      deco: function (c, x, y, px, py, r, lair) {
+        if ((x + y) % 2 === 0) { c.fillStyle = 'rgba(255,240,210,0.05)'; c.fillRect(px, py, 32, 32); }
+        if (r < 0.1) {
+          c.strokeStyle = 'rgba(255,210,74,0.45)'; c.lineWidth = 1;
+          c.beginPath(); c.moveTo(px + 3, py + 8 + h(x, y, 6) * 16); c.lineTo(px + 15, py + 6 + h(x, y, 7) * 20); c.lineTo(px + 29, py + 8 + h(x, y, 8) * 16); c.stroke();
+        } else if (r < (lair ? 0.3 : 0.15)) {
+          dot(c, px + 7 + h(x, y, 8) * 18, py + 7 + h(x, y, 9) * 18, 2, 'rgba(255,210,74,0.8)');
+        }
+      },
+      wall: function (c, x, y, px, fy, fh) { c.fillStyle = 'rgba(255,210,74,0.4)'; c.fillRect(px, fy + fh - 2, 32, 1); }
+    },
+    drowned_queen: {
+      floor: '#2e4048', lair: '#2c4658', rock: '#22323a', deep: '#0e171c', bed: '#03090c', face: ['#2c4650', '#1a2a32'], rim: '110,200,240',
+      deco: function (c, x, y, px, py, r) {
+        if (r < 0.16) {
+          c.fillStyle = 'rgba(70,150,190,0.3)';
+          c.beginPath(); c.ellipse(px + 8 + h(x, y, 8) * 16, py + 8 + h(x, y, 9) * 16, 7, 3.5, 0, 0, 6.283); c.fill();
+        } else if (r < 0.23) {
+          for (var i = 0; i < 4; i++) dot(c, px + 8 + h(x, y, 30 + i) * 16, py + 8 + h(x, y, 40 + i) * 16, 1.2, 'rgba(215,200,180,0.55)');
+        }
+      },
+      wall: function (c, x, y, px, fy, fh) {
+        if (h(x, y, 21) < 0.3) { c.fillStyle = 'rgba(60,140,110,0.6)'; c.fillRect(px + 4 + h(x, y, 22) * 22, fy, 2, fh * (0.4 + h(x, y, 23) * 0.6)); }
+      }
+    },
+    clockwork_warden: {
+      floor: '#3e4044', lair: '#46403c', rock: '#2e3034', deep: '#15161a', bed: '#060608', face: ['#4c4e54', '#2c2e32'], rim: '255,176,96',
+      deco: function (c, x, y, px, py, r) {
+        [[3, 3], [29, 3], [3, 29], [29, 29]].forEach(function (o) { dot(c, px + o[0], py + o[1], 1, 'rgba(190,190,195,0.4)'); });
+        if (r < 0.1) {
+          c.fillStyle = 'rgba(0,0,0,0.35)';
+          for (var i = 0; i < 4; i++) c.fillRect(px + 8, py + 9 + i * 4, 16, 2);
+        } else if (r < 0.15) {
+          c.strokeStyle = 'rgba(200,168,96,0.45)'; c.lineWidth = 1.5;
+          c.beginPath(); c.arc(px + 16, py + 16, 5, 0, 6.283); c.stroke();
+          for (var k = 0; k < 6; k++) { var a = k * 1.047; c.fillStyle = 'rgba(200,168,96,0.45)'; c.fillRect(px + 16 + Math.cos(a) * 7 - 1, py + 16 + Math.sin(a) * 7 - 1, 2, 2); }
+        }
+      },
+      wall: function (c, x, y, px, fy, fh) {
+        if (x % 4 === 0) { c.fillStyle = 'rgba(190,120,60,0.5)'; c.fillRect(px, fy + 4, 32, 2); }
+      }
+    }
+  };
+})(window.TT);
+
+</script>
 <script>/* src/render/renderer.js */
 /*
  * Tiny Tyrant — world renderer: tiles, decals, traps/torches/posts, entities, overlays.
@@ -16985,6 +17063,8 @@ button { font-family: var(--font-body); color: var(--text); }
   }
 
   /* ------------------------------------------------------------------ tile art */
+  /* Each boss keeps house differently: stone colours plus scattered floor details. See THEMES below. */
+  var TH = null;
   function drawFloorTile(c, g, x, y, base, lair) {
     var px = x * T, py = y * T;
     c.fillStyle = shade(base, (h2(x, y, 1) - 0.5) * 8);
@@ -17001,7 +17081,8 @@ button { font-family: var(--font-body); color: var(--text); }
       c.fillRect(px + 1 + (k === 1 ? sx : 0), py + 1 + (k === 2 ? sy : 0), k === 1 ? T - sx - 1 : sx - 1, k === 2 ? T - sy - 1 : sy - 1);
     }
     var r = h2(x, y, 5);
-    if (r < 0.12) { // crack
+    if (TH && TH.deco) { TH.deco(c, x, y, px, py, r, lair); }
+    else if (r < 0.12) { // crack
       c.strokeStyle = 'rgba(0,0,0,0.6)'; c.lineWidth = 1; c.beginPath();
       var cx = px + 4 + h2(x, y, 6) * 22, cy = py + 4 + h2(x, y, 7) * 22;
       c.moveTo(cx, cy); c.lineTo(cx + 5, cy + 3); c.lineTo(cx + 7, cy + 9); c.stroke();
@@ -17011,7 +17092,7 @@ button { font-family: var(--font-body); color: var(--text); }
       c.fillStyle = 'rgba(60,80,40,0.22)'; c.beginPath(); c.arc(px + 8 + h2(x, y, 8) * 16, py + 8 + h2(x, y, 9) * 16, 3 + h2(x, y, 11) * 3, 0, 6.283); c.fill();
     }
     if (lair) {
-      c.strokeStyle = 'rgba(150,90,220,0.12)'; c.lineWidth = 1;
+      c.strokeStyle = 'rgba(' + TH.rim + ',0.14)'; c.lineWidth = 1;
       if (h2(x, y, 12) < 0.35) { c.beginPath(); c.arc(px + 16, py + 16, 6 + h2(x, y, 13) * 6, h2(x, y, 14) * 6, h2(x, y, 14) * 6 + 2); c.stroke(); }
     }
     // ambient occlusion along walls
@@ -17027,13 +17108,13 @@ button { font-family: var(--font-body); color: var(--text); }
     var px = x * T, py = y * T;
     var exposed = G.adjacentWalkable(g, x, y);
     if (bed) {
-      c.fillStyle = '#060508'; c.fillRect(px, py, T, T);
+      c.fillStyle = TH.bed; c.fillRect(px, py, T, T);
       c.strokeStyle = 'rgba(30,26,36,0.6)'; c.lineWidth = 1; c.beginPath();
       for (var d = -T; d < T; d += 8) { c.moveTo(px + d, py + T); c.lineTo(px + d + T, py); }
       c.stroke();
       if (!exposed) return;
     } else {
-      c.fillStyle = exposed ? '#2c2632' : '#17141b';
+      c.fillStyle = exposed ? TH.rock : TH.deep;
       c.fillRect(px, py, T, T);
       for (var i = 0; i < (exposed ? 7 : 4); i++) {
         c.fillStyle = exposed ? 'rgba(70,60,80,' + (0.12 + h2(x, y, 20 + i) * 0.18) + ')' : 'rgba(40,34,46,0.35)';
@@ -17048,7 +17129,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (G.isWalkable(g, x, y + 1)) {
       var fh = 14, fy = py + T - fh;
       var grd = c.createLinearGradient(0, fy, 0, py + T);
-      grd.addColorStop(0, bed ? '#1e1a22' : '#3a3242'); grd.addColorStop(1, bed ? '#141018' : '#231d2a');
+      grd.addColorStop(0, bed ? '#1e1a22' : TH.face[0]); grd.addColorStop(1, bed ? '#141018' : TH.face[1]);
       c.fillStyle = grd; c.fillRect(px, fy, T, fh);
       c.fillStyle = 'rgba(0,0,0,0.45)';
       c.fillRect(px, fy + 6, T, 1);
@@ -17056,6 +17137,7 @@ button { font-family: var(--font-body); color: var(--text); }
       for (var b = off; b < T; b += 16) c.fillRect(px + b, fy, 1, 6);
       for (var b2 = off + 8; b2 < T; b2 += 16) c.fillRect(px + b2, fy + 7, 1, 7);
       c.fillStyle = 'rgba(255,220,180,0.06)'; c.fillRect(px, fy, T, 1);
+      if (TH.wall && !bed) TH.wall(c, x, y, px, fy, fh);
     }
     // crisp rim where rock meets open floor
     c.fillStyle = 'rgba(90,78,100,0.35)';
@@ -17066,6 +17148,7 @@ button { font-family: var(--font-body); color: var(--text); }
 
   function rebuildTiles(state) {
     var g = state.grid;
+    TH = TT.dungeonThemes[state.bossId] || TT.dungeonThemes.lich;
     if (!tileCanvas || tileW !== g.w || tileH !== g.h) {
       tileW = g.w; tileH = g.h;
       tileCanvas = mk(g.w * T, g.h * T); tileCtx = tileCanvas.getContext('2d');
@@ -17075,8 +17158,8 @@ button { font-family: var(--font-body); color: var(--text); }
     c.clearRect(0, 0, tileCanvas.width, tileCanvas.height);
     for (var y = 0; y < g.h; y++) for (var x = 0; x < g.w; x++) {
       var t = g.tiles[y * g.w + x];
-      if (t === TL.FLOOR) drawFloorTile(c, g, x, y, '#3a3240', false);
-      else if (t === TL.LAIR) drawFloorTile(c, g, x, y, '#3a2848', true);
+      if (t === TL.FLOOR) drawFloorTile(c, g, x, y, TH.floor, false);
+      else if (t === TL.LAIR) drawFloorTile(c, g, x, y, TH.lair, true);
       else if (t === TL.ENTRANCE) {
         drawFloorTile(c, g, x, y, '#242a33', false);
         var grd = c.createLinearGradient(x * T, 0, x * T + T, 0);
@@ -17087,7 +17170,7 @@ button { font-family: var(--font-body); color: var(--text); }
     }
     // the lair's border sigil
     var L = g.lair;
-    c.strokeStyle = 'rgba(160,100,230,0.18)'; c.lineWidth = 2; c.setLineDash([6, 5]);
+    c.strokeStyle = 'rgba(' + TH.rim + ',0.28)'; c.lineWidth = 2; c.setLineDash([6, 5]);
     c.strokeRect(L.x * T + 3, L.y * T + 3, L.w * T - 6, L.h * T - 6);
     c.setLineDash([]);
     // erase decals that are now inside rock
@@ -17455,7 +17538,7 @@ button { font-family: var(--font-body); color: var(--text); }
       if (!ctx) return;
       var cam = TT.camera;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = '#040306'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = state && TT.dungeonThemes[state.bossId] ? TT.dungeonThemes[state.bossId].bed : '#040306'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       if (!state) return;
       if (tileRev !== state.grid.rev || !tileCanvas) rebuildTiles(state);
       var info = { t: t, alpha: alpha, T: T, cam: cam, dt: dt };
@@ -22508,7 +22591,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var b = TT.defs.bosses[id];
     if (!b || !bossUnlocked(b)) return;
     stopAnim();
-    TT.main.startNewRun(id, null, { ascension: TT.ascension ? TT.ascension.lastPicked(id) : 0, region: TT.conquest.picked, stronghold: TT.conquest.useStronghold && !!TT.conquest.strongholdInfo() });
+    TT.main.startNewRun(id, null, { ascension: TT.ascension ? TT.ascension.lastPicked(id) : 0, region: TT.conquest.picked });
   }
 
   ui().screens.register('bossSelect', { render: renderBossSelect, onHide: stopAnim });
@@ -24924,8 +25007,6 @@ button { font-family: var(--font-body); color: var(--text); }
     '.cq-sum{text-align:center;font-size:13px;color:var(--text-faint);margin-bottom:4px}',
     '.tt-tree-lv{text-align:center;font-size:16px;color:#ffcf7a;margin-bottom:12px}',
     '.tt-tree-lv small{display:block;font-size:12px;color:var(--text-faint)}',
-    '.tt-stronghold{display:flex;align-items:center;justify-content:center;gap:8px;margin:6px 0;font-size:14px;color:var(--text-dim);min-height:40px}',
-    '.tt-stronghold input{width:20px;height:20px}',
     '#tt-evo{position:absolute;inset:0;z-index:44;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;background:radial-gradient(circle,rgba(60,20,90,.9),rgba(5,3,7,.96))}',
     '#tt-evo h2{margin:0;font-weight:normal;letter-spacing:.2em;text-transform:uppercase;font-size:24px;color:#ffe2a8;text-shadow:0 0 24px #ff7a20}',
     '#tt-evo .sub{font-size:14px;color:var(--text-dim)}',
@@ -25123,14 +25204,6 @@ button { font-family: var(--font-body); color: var(--text); }
       var bar = scr.querySelector('.mt-begin');
       var sel = scr.querySelector('.mt-card.sel');
       if (bar) {
-        var info = C.strongholdInfo();
-        if (info) {
-          var sh = document.createElement('label');
-          sh.className = 'tt-stronghold';
-          sh.innerHTML = '<input type="checkbox"' + (C.useStronghold ? ' checked' : '') + '> Stronghold: keep your tunnels' + (info.traps ? ' and ' + info.traps + ' trap' + (info.traps > 1 ? 's' : '') : '');
-          sh.querySelector('input').addEventListener('change', function (ev) { C.useStronghold = ev.target.checked; });
-          bar.parentNode.insertBefore(sh, bar);
-        }
         var id = ui.metaSelected ? ui.metaSelected() : null;
         if (id) {
           var tb = document.createElement('button');
