@@ -12211,15 +12211,30 @@ button { font-family: var(--font-body); color: var(--text); }
     return b;
   }, 99);
 
+  /* S is earned with style: combos, a mix of traps, and no more of them than you needed. */
+  function styleOf(st, rep) {
+    var used = 0, stats = rep.trapStats || {};
+    Object.keys(stats).forEach(function (k) { if (stats[k].damage >= 1) used++; });
+    var combos = Object.keys(rep.reactions || {}).length, raid = st.raidNum;
+    var s = {
+      combos: combos, combosNeed: 2,
+      variety: used, varietyNeed: Math.min(6, 2 + Math.floor(raid / 3)),
+      traps: TT.pressure.trapsBuilt(st), trapsMax: Math.ceil(TT.pressure.trapLimit(st) * 0.6)
+    };
+    s.perfect = s.combos >= s.combosNeed && s.variety >= s.varietyNeed && s.traps <= s.trapsMax;
+    return s;
+  }
   function gradeOf(rep) {
     if (rep.escapes.length) return rep.lootStolen > 0 && rep.lootStolen >= rep.hoardAfter * 0.2 ? 'C' : 'B';
-    return rep.bossDamageTaken > 0 ? 'A' : 'S';
+    return rep.style.perfect && rep.bossAlive !== false ? 'S' : 'A';
   }
   TT.events.on('raidEnd', function (e) {
     var st = e.state, rep = e.report;
     if (!st || !rep) return;
     var g = ext(st), before = g.wrath;
+    rep.style = styleOf(st, rep);
     rep.grade = gradeOf(rep);
+    if (rep.grade === 'S') { rep.styleGold = 40 + 8 * st.raidNum; st.gold += rep.styleGold; }
     g.bonus += GRADE_INFAMY[rep.grade] + g.wrath;
     if (!rep.escapes.length) g.wrath = Math.min(WRATH_MAX, g.wrath + 1);
     else if (rep.lootStolen > 0) g.wrath = Math.max(0, g.wrath - 1);
@@ -13179,6 +13194,38 @@ button { font-family: var(--font-body); color: var(--text); }
   P.turns = function (state) { return routeList(state).filter(function (t) { return t.turned; }).length; };
   P.windingGold = function (state) { return Math.min(GOLD_TURN_CAP, P.turns(state) * GOLD_PER_TURN); };
   P.CHARGE_FROM = CHARGE_FROM;
+
+  /* Traps packed together give each other away: a hero who spots one sees the rest, and they are easier to work. */
+  P.crowding = function (state, x, y, self) {
+    var n = 0;
+    state.traps.forEach(function (t) {
+      if (t === self || (t.x === x && t.y === y)) return;
+      var d = TT.defs.traps[t.id];
+      if (d && !d.building && Math.abs(t.x - x) <= 2 && Math.abs(t.y - y) <= 2) n++;
+    });
+    return n;
+  };
+  var CROWD_FROM = 2;
+  P.CROWD_FROM = CROWD_FROM;
+  var baseSpot = TT.hooks.trapDetectChance, baseWork = TT.hooks.trapDisarmChance;
+  TT.hooks.trapDetectChance = function (hero, trap, state) {
+    var c = baseSpot ? baseSpot(hero, trap, state) : 0, st = state || TT.state, n = P.crowding(st, trap.x, trap.y, trap) - CROWD_FROM + 1;
+    if (n <= 0 || (hero.data.blindUntil > (st.raid ? st.raid.t : 0))) return c;
+    return Math.min(0.9, c * (1 + 0.35 * n) + 0.03 * n);
+  };
+  TT.hooks.trapDisarmChance = function (hero, trap, state) {
+    var c = baseWork ? baseWork(hero, trap, state) : 0, n = P.crowding(state || TT.state, trap.x, trap.y, trap) - CROWD_FROM + 1;
+    return n > 0 ? Math.min(0.98, c * (1 + 0.15 * n)) : c;
+  };
+  TT.events.on('trapDetected', function (e) {
+    var st = e.state || TT.state, h = e.hero, t = e.trap;
+    if (!st || !h || !t || P.crowding(st, t.x, t.y, t) < CROWD_FROM) return;
+    st.traps.forEach(function (o) {
+      var k = o.x + ',' + o.y;
+      if (o !== t && !o.disabled && !h.knownTraps[k] && Math.abs(o.x - t.x) <= 2 && Math.abs(o.y - t.y) <= 2) h.knownTraps[k] = { id: o.id, how: 'detected', t: st.raid ? st.raid.t : 0 };
+    });
+    h.repath = true;
+  });
 
   /* Souls are scarce: a raid only yields so many, however big the party was. */
   P.soulLimit = function (state) { return 4 + Math.floor((state.raidNum || 1) / 4); };
@@ -14277,6 +14324,154 @@ button { font-family: var(--font-body); color: var(--text); }
     var st = e && e.state;
     if (st) { st.ext = st.ext || {}; if (!st.ext.region) st.ext.region = 'barrow_downs'; if (!st.ext.tree) st.ext.tree = {}; }
   });
+})(window.TT);
+
+</script>
+<script>/* src/systems/captives.js */
+/*
+ * Tiny Tyrant — src/systems/captives.js
+ * Headless-safe. Every captive is worth something the same night:
+ *   Ransom  gold now, more for a higher level.
+ *   Turn    costs souls. They stand guard for you near the hoard, with their class's stats and sprite.
+ *           Healers mend your minions, tanks hit like tanks, archers and casters shoot from range.
+ *   Spy     free. Release them, and see exactly who is coming next raid and what they are weak to.
+ *
+ * post.data for a turned hero: {classId, turned: name, level}.
+ * state.ext.spy = {raid, party: [spec], preview: {classes: [{id, n}], weak: [type]}}
+ *
+ * TT.captives API: next(state), ransomGold(c), turnCost(c), ransom(state), turn(state), spy(state), auto(state), preview(state)
+ */
+(function (TT) {
+  'use strict';
+  var H = TT.hooks, CB = TT.combat, U = TT.util;
+  var C = TT.captives = {};
+
+  C.next = function (state) { return (state.captives || [])[0] || null; };
+  C.ransomGold = function (c) { return 60 + 25 * Math.max(1, c.level || 1); };
+  C.turnCost = function () { return 2; };
+  function release(state, c) {
+    state.captives.shift();
+    if (TT.roster && TT.roster.get(state, c.heroId)) TT.roster.setStatus(state, c.heroId, 'retired');
+  }
+  C.ransom = function (state) {
+    var c = C.next(state);
+    if (!c) return false;
+    TT.game.gain(state, { gold: C.ransomGold(c), souls: 0 }, 'ransom');
+    release(state, c);
+    return true;
+  };
+
+  /* ------------------------------------------------------------------ turned */
+  TT.registerMinion({
+    id: 'turncoat', name: 'Turncoat', hidden: true, special: true,
+    desc: 'A hero who decided living was better.',
+    cost: { gold: 0, souls: 0 }, hp: 60, dmg: 8, damageType: 'physical',
+    speed: 1.5, attackRange: 1.15, attackCooldown: 1.1, alertRadius: 5, leash: 8,
+    tags: ['melee'], role: 'Turncoat',
+    onTick: function (m, ctx) {
+      if (m.data.turnedRole !== 'healer') return;
+      m.data.mendT = (m.data.mendT || 0) - ctx.dt;
+      if (m.data.mendT > 0) return;
+      m.data.mendT = 3;
+      var hurt = null, worst = 0.9;
+      ctx.raid.minions.forEach(function (o) {
+        if (TT.isActive(o) && o.hp / o.maxHp < worst && U.dist(o.x, o.y, m.x, m.y) <= 5) { worst = o.hp / o.maxHp; hurt = o; }
+      });
+      if (hurt) CB.heal(hurt, 15 + 3 * (m.data.turnedLevel || 1), m);
+    }
+  });
+  function postOf(state, uid) {
+    for (var i = 0; i < state.minions.length; i++) if (state.minions[i].uid === uid) return state.minions[i];
+    return null;
+  }
+  TT.addFilter('minionStats', function (m, ctx) {
+    var st = ctx && ctx.state, p = st && m.postUid != null ? postOf(st, m.postUid) : null, d = p && p.data, def = d && d.classId && TT.defs.heroes[d.classId];
+    if (!def) return m;
+    var lv = 1 + 0.12 * Math.max(0, (d.level || 1) - 1);
+    m.maxHp = m.hp = Math.round((def.hp || 60) * lv);
+    m.dmg = (def.dmg || 8) * lv;
+    m.damageType = def.damageType || 'physical';
+    m.range = def.attackRange || 1.15;
+    m.atkCd = def.attackCooldown || 1;
+    m.speed = def.speed || 1.5;
+    m.armor = def.armor || 0;
+    m.resist = U.clone(def.resist || {});
+    m.name = d.turned;
+    m.data.turnedClass = d.classId;
+    m.data.turnedRole = def.role;
+    m.data.turnedLevel = d.level;
+    return m;
+  }, 30);
+  /* Nearest open tile to the hoard. */
+  function spotNearHoard(state) {
+    var t = state.grid.treasure, tool = { type: 'minion', id: 'turncoat' };
+    for (var r = 1; r < 14; r++) {
+      for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (TT.game.check(state, tool, t.x + dx, t.y + dy).ok) return { x: t.x + dx, y: t.y + dy };
+      }
+    }
+    return null;
+  }
+  C.canTurn = function (state) {
+    var c = C.next(state);
+    if (!c) return false;
+    return state.souls >= C.turnCost(c) && !!TT.defs.heroes[c.classId] && !!spotNearHoard(state);
+  };
+  C.turn = function (state) {
+    var c = C.next(state);
+    if (!c || !C.canTurn(state)) return false;
+    var at = spotNearHoard(state);
+    if (!TT.game.act(state, { type: 'minion', id: 'turncoat' }, at.x, at.y).ok) return false;
+    var post = TT.grid.minionAt(state, at.x, at.y);
+    post.data = post.data || {};
+    post.data.classId = c.classId; post.data.turned = c.name; post.data.level = c.level; post.data.name = c.name;
+    TT.game.spend(state, { gold: 0, souls: C.turnCost(c) }, 'minion');
+    release(state, c);
+    return true;
+  };
+
+  /* ------------------------------------------------------------------ spy */
+  var baseGenerate = H.generateParty;
+  H.generateParty = function (state) {
+    var s = state.ext && state.ext.spy;
+    if (s && s.raid === state.raidNum && s.party) {
+      var party = s.party;
+      s.party = null;
+      return party;
+    }
+    return baseGenerate(state);
+  };
+  function buildPreview(party) {
+    var counts = {}, weak = {};
+    party.forEach(function (sp) {
+      counts[sp.classId] = (counts[sp.classId] || 0) + 1;
+      var def = TT.defs.heroes[sp.classId] || {}, res = def.resist || {};
+      Object.keys(res).forEach(function (k) { if (res[k] < 0) weak[k] = (weak[k] || 0) + 1; });
+      Object.keys(sp.resist || {}).forEach(function (k) { if (sp.resist[k] < 0) weak[k] = (weak[k] || 0) + 1; });
+    });
+    return {
+      classes: Object.keys(counts).map(function (id) { return { id: id, n: counts[id] }; }).sort(function (a, b) { return b.n - a.n || (a.id < b.id ? -1 : 1); }),
+      weak: Object.keys(weak).sort(function (a, b) { return weak[b] - weak[a]; }).slice(0, 3)
+    };
+  }
+  C.spy = function (state) {
+    var c = C.next(state);
+    if (!c) return false;
+    release(state, c);
+    state.ext = state.ext || {};
+    var known = state.ext.spy && state.ext.spy.raid === state.raidNum && state.ext.spy.party;
+    var party = known || baseGenerate(state) || [];
+    state.ext.spy = { raid: state.raidNum, party: party, preview: buildPreview(party) };
+    return true;
+  };
+  C.preview = function (state) {
+    var s = state && state.ext && state.ext.spy;
+    return s && s.raid === state.raidNum && state.phase === 'build' ? s.preview : null;
+  };
+
+  /* A script ransoms everything; it cannot make use of the others. */
+  C.auto = function (state) { while (C.next(state)) C.ransom(state); };
 })(window.TT);
 
 </script>
@@ -16672,7 +16867,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (state.phase !== 'raid') {
       state.minions.forEach(function (p) {
         c.drawImage(TT.sprites.get('post', 0), p.x * T, p.y * T);
-        drawSpriteAt('minion_' + p.id, p.x + 0.5, p.y + 0.5, Math.floor(t * 2 + p.uid) % 2, 1, false);
+        drawSpriteAt(p.data && p.data.classId ? 'hero_' + p.data.classId : 'minion_' + p.id, p.x + 0.5, p.y + 0.5, Math.floor(t * 2 + p.uid) % 2, 1, false);
       });
       var bp = g.bossPost;
       drawSpriteAt('boss_' + state.bossId, bp.x + 0.5, bp.y + 0.5, Math.floor(t * 2) % 4, 1, false);
@@ -16690,7 +16885,7 @@ button { font-family: var(--font-body); color: var(--text); }
     });
     if (building) {
       ctx.globalAlpha = a * 0.8;
-      state.minions.forEach(function (p) { drawSpriteAt('minion_' + p.id, p.x + 0.5, p.y + 0.5, 0, 1, false); });
+      state.minions.forEach(function (p) { drawSpriteAt(p.data && p.data.classId ? 'hero_' + p.data.classId : 'minion_' + p.id, p.x + 0.5, p.y + 0.5, 0, 1, false); });
     }
     ctx.restore();
   }
@@ -16764,7 +16959,7 @@ button { font-family: var(--font-body); color: var(--text); }
   function spriteKey(e) {
     if (e.kind === 'hero') return 'hero_' + e.defId;
     if (e.kind === 'boss') return 'boss_' + e.defId;
-    return 'minion_' + e.defId;
+    return e.data.turnedClass ? 'hero_' + e.data.turnedClass : 'minion_' + e.defId;
   }
 
   /* ------------------------------------------------------------------ entities */
@@ -17806,6 +18001,28 @@ button { font-family: var(--font-body); color: var(--text); }
     }
   }
 
+  /* An eye on any trap packed in close enough to give itself away. */
+  function eye(ctx, x, y, heavy) {
+    var cx = x * T + 7, cy = (y + 1) * T - 7;
+    ctx.fillStyle = 'rgba(8,5,10,0.85)'; ctx.beginPath(); ctx.arc(cx, cy, 6, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = heavy ? '#ff5a40' : '#ffb060'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(cx - 4.5, cy); ctx.quadraticCurveTo(cx, cy - 4.5, cx + 4.5, cy); ctx.quadraticCurveTo(cx, cy + 4.5, cx - 4.5, cy); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.arc(cx, cy, 1.5, 0, 6.283); ctx.fill();
+  }
+  function drawCrowds(ctx, state) {
+    var P = TT.pressure, gh = TT.render.ghost, hv = TT.render.hover;
+    state.traps.forEach(function (tp) {
+      var d = TT.defs.traps[tp.id];
+      if (!d || d.building) return;
+      var n = P.crowding(state, tp.x, tp.y, tp);
+      if (n >= P.CROWD_FROM) eye(ctx, tp.x, tp.y, n >= P.CROWD_FROM + 2);
+    });
+    if (gh && gh.tool && gh.tool.type === 'trap' && hv && TT.defs.traps[gh.tool.id] && !TT.defs.traps[gh.tool.id].building) {
+      var g = P.crowding(state, hv.x, hv.y, null);
+      if (g >= P.CROWD_FROM) eye(ctx, hv.x, hv.y, g >= P.CROWD_FROM + 2);
+    }
+  }
+
   /* Where the heroes will be charging: red arrows along every straight stretch of the route. */
   function drawRuns(ctx, state, t) {
     var P = TT.pressure;
@@ -17826,6 +18043,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var t = info.t, hv = TT.render.hover, gh = TT.render.ghost;
     if (state.phase === 'build') {
       drawRuns(ctx, state, t);
+      drawCrowds(ctx, state);
       state.traps.forEach(function (tp) {
         var def = TT.defs.traps[tp.id];
         if (!A.isAimed(def)) return;
@@ -21338,7 +21556,6 @@ button { font-family: var(--font-body); color: var(--text); }
 
     var row = el('div', 'row', null, el0);
     var pend = TT.interrogate ? TT.interrogate.pending(st) : 0;
-    if (pend) a.button('Question the Captives (' + pend + ')', 'big', function () { S.show('interrogate', { back: viewOnly ? 'raidReport' : 'aftermath', report: rep, prevBack: p.back }); }, row);
     a.button('Town Knowledge', 'big', function () { S.show('townKnowledge', { back: viewOnly ? 'raidReport' : 'aftermath', report: rep, prevBack: p.back }); }, row);
     if (viewOnly) a.button('Close', 'big primary', function () { back({ back: p.back }, a); }, row);
     else a.button(st && st.outcome ? R.endLabel(st) : 'Return to the Dark', 'big primary', function () { TT.main.afterRaid(); }, row);
@@ -21621,7 +21838,6 @@ button { font-family: var(--font-body); color: var(--text); }
       });
       var row = el('div', 'row', null, root);
       var pend = I.pending(st);
-      if (pend) a.button('Question the Captives (' + pend + ')', 'big', function () { S.show('interrogate', { back: p.back, prevBack: p.prevBack, report: p.report }); }, row);
       a.button('Back', 'big primary', function () { back(p, a); }, row);
     }
   });
@@ -23983,6 +24199,10 @@ button { font-family: var(--font-body); color: var(--text); }
     '.sm-grade.B{color:#a8c8ff;text-shadow:0 0 24px #3a70d0}',
     '.sm-grade.C{color:#ff8a78;text-shadow:0 0 24px #d02010}',
     '@keyframes ttstamp{from{opacity:0;transform:scale(3.4) rotate(-14deg)}}',
+    '.sm-style{display:flex;justify-content:center;gap:10px;margin:0 0 8px;font-size:14px}',
+    '.sm-style span{padding:2px 8px;border:1px solid var(--edge);border-radius:3px}',
+    '.sm-style .ok{color:#c9f08a;border-color:#70c020}',
+    '.sm-style .no{color:#ff9a78;border-color:#a04030}',
     '.sm-wrath{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:#ff9a60;margin-bottom:6px}',
     '.tt-rank{margin:6px auto 18px;width:min(320px,80vw)}',
     '.tt-rank .nm{font-size:15px;letter-spacing:.14em;color:#ffcf7a;text-transform:uppercase}',
@@ -24045,6 +24265,18 @@ button { font-family: var(--font-body); color: var(--text); }
       g.className = 'sm-grade ' + rep.grade;
       g.textContent = rep.grade;
       h2.parentNode.insertBefore(g, h2.nextSibling);
+      if (rep.style && !rep.escapes.length) {
+        var sr = document.createElement('div'), sty = rep.style;
+        sr.className = 'sm-style';
+        [['Combos', sty.combos, sty.combosNeed, sty.combos >= sty.combosNeed], ['Mix', sty.variety, sty.varietyNeed, sty.variety >= sty.varietyNeed], ['Traps', sty.traps, sty.trapsMax, sty.traps <= sty.trapsMax]].forEach(function (x) {
+          var c = document.createElement('span');
+          c.className = x[3] ? 'ok' : 'no';
+          c.textContent = x[0] + ' ' + x[1] + '/' + x[2];
+          sr.appendChild(c);
+        });
+        g.parentNode.insertBefore(sr, g.nextSibling);
+        if (rep.styleGold) { var sg = document.createElement('div'); sg.className = 'sm-wrath'; sg.textContent = '+' + rep.styleGold + ' gold for style'; sr.parentNode.insertBefore(sg, sr.nextSibling); }
+      }
       if (rep.wrathAfter > rep.wrathBefore) {
         var w = document.createElement('div');
         w.className = 'sm-wrath';
@@ -24231,6 +24463,8 @@ button { font-family: var(--font-body); color: var(--text); }
     ui.el('span', null, '= 100', key);
     ui.el('div', 'key', '<span style="color:#ff4a30;font-size:18px">&raquo;&raquo;</span> Heroes charge down straight tunnels. Turns pay gold.', chart);
     ui.el('div', 'key', 'Heroes grow wise to a trap each time it hits. Mix them.', chart);
+    ui.el('div', 'key', 'An eye means traps are packed too close: heroes spot them sooner.', chart);
+    ui.el('div', 'key', 'S grade needs combos, a mix of traps, and few traps.', chart);
     var close = ui.el('button', 'tt-btn', 'Back', chart);
     close.addEventListener('click', function () { ui.click(); chart.remove(); chart = null; });
   }
@@ -24416,6 +24650,11 @@ button { font-family: var(--font-body); color: var(--text); }
     '#tt-evo .card span{font-size:13px;color:var(--text-dim)}',
     '.mt-card.locked{display:flex;flex-direction:column}',
     '.mt-card.locked .mt-veil{position:static;inset:auto;margin-top:6px;padding:6px 0 0;background:none;height:auto}',
+    '#tt-spy{position:absolute;left:10px;top:118px;z-index:6;width:150px;padding:8px;background:var(--panel);border:1px solid #8fd0ff;border-radius:4px;color:var(--text);font-size:13px}',
+    '#tt-spy .w{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#8fd0ff;text-align:center;margin-bottom:4px}',
+    '#tt-spy .list{display:flex;flex-wrap:wrap;gap:2px 8px}',
+    '#tt-spy .one{display:flex;align-items:center;gap:1px}',
+    '#tt-spy .weak{display:flex;align-items:center;gap:4px;margin-top:6px;color:#ffcf7a}',
     '.tt-note.gold{color:#ffd24a}',
     '.go-gain{margin:8px 0 12px;text-align:center;font-size:15px;color:#ffd24a}',
     '.go-gain div{margin-bottom:4px}'
@@ -24509,6 +24748,8 @@ button { font-family: var(--font-body); color: var(--text); }
       });
       return;
     }
+    var cap = TT.captives.next(st);
+    if (cap && !Gr.pendingPromotion(st) && !(TT.trapbook.offer(st))) { captiveCard(st, cap); return; }
     var post = Gr.pendingPromotion(st);
     if (post) {
       var o2 = overlay(), md = TT.defs.minions[post.id];
@@ -24520,6 +24761,46 @@ button { font-family: var(--font-body); color: var(--text); }
         var c2 = ui.el('button', 'card', '<b>' + ui.esc(path.name) + '</b><span>' + ui.esc(path.desc) + '</span>', row2);
         c2.addEventListener('click', function () { ui.click(); Gr.promote(st, path.id); o2.remove(); if (TT.save && TT.save.write) TT.save.write(st); });
       });
+    }
+  }
+
+  function captiveCard(st, cap) {
+    var K = TT.captives, o = overlay(), def = TT.defs.heroes[cap.classId];
+    ui.el('h2', null, ui.esc(cap.name), o);
+    ui.el('div', 'sub', 'Captive' + (def ? ': level ' + (cap.level || 1) + ' ' + ui.esc(def.name) : ''), o);
+    if (def) ui.el('div', 'pic', null, o).appendChild(TT.sprites.icon('hero_' + cap.classId, 96));
+    var row = ui.el('div', 'row', null, o);
+    function opt(name, desc, fn, off) {
+      var c = ui.el('button', 'card', '<b>' + name + '</b><span>' + desc + '</span>', row);
+      c.disabled = !!off;
+      if (off) c.style.opacity = '.4';
+      c.addEventListener('click', function () { ui.click(); fn(st); o.remove(); if (TT.save && TT.save.write) TT.save.write(st); });
+    }
+    opt('Ransom', '+' + K.ransomGold(cap) + ' gold.', K.ransom);
+    opt('Turn', 'Costs ' + K.turnCost(cap) + ' souls. Guards your hoard for you.', K.turn, !K.canTurn(st));
+    opt('Spy', 'Free. See who comes next raid and what they fear.', K.spy);
+  }
+  /* Who a spy says is coming. */
+  var spyBox = null, spyKey = '';
+  function syncSpy() {
+    var st = TT.state, prev = st && ui.hud.visible ? TT.captives.preview(st) : null, k = prev ? JSON.stringify(prev) : '';
+    if (!spyBox) { spyBox = ui.el('div', 'hidden', null, document.getElementById('ui')); spyBox.id = 'tt-spy'; }
+    spyBox.classList.toggle('hidden', !prev);
+    if (k === spyKey) return;
+    spyKey = k;
+    spyBox.innerHTML = '';
+    if (!prev) return;
+    ui.el('div', 'w', 'Next raid', spyBox);
+    var list = ui.el('div', 'list', null, spyBox);
+    prev.classes.forEach(function (c) {
+      var one = ui.el('div', 'one', null, list), d = TT.defs.heroes[c.id];
+      one.appendChild(TT.sprites.icon('hero_' + c.id, 28));
+      ui.el('span', null, '&times;' + c.n, one);
+      if (d) one.title = d.name;
+    });
+    if (prev.weak.length) {
+      var w = ui.el('div', 'weak', '<span>Weak</span>', spyBox);
+      prev.weak.forEach(function (t) { var e = TT.elements.elementOfType(t); if (e) w.appendChild(TT.icons.el(e, 18)); });
     }
   }
 
@@ -24578,6 +24859,7 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.events.on('uiReady', function () {
     var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
     setInterval(sync, 250);
+    setInterval(syncSpy, 300);
   });
 })(window.TT);
 
@@ -24595,7 +24877,7 @@ button { font-family: var(--font-body); color: var(--text); }
 
   var CSS = [
     // the raid log, season track, volume widget and side buttons
-    '#hud-log,#mt-season,.tt-audio:not(.inline),#hudbtn-chronicle,#hudbtn-town{display:none!important}',
+    '#hud-log,#mt-season,.tt-audio:not(.inline),#hudbtn-chronicle,#hudbtn-town,#hudbtn-captives{display:none!important}',
     'body[data-phase=build] #hud-top .speed{display:none}',
     '.hero-row .sub{display:none}',
     '#hud-heroes{width:150px;max-height:calc(100% - 190px);overflow:hidden;gap:2px}',
