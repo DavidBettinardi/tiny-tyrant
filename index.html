@@ -1269,6 +1269,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (e.status.slow) m *= 1 - U.clamp(e.status.slow.magnitude || 0.4, 0, 0.95);
     if (e.status.web || e.status.stun) m = 0;
     if (e.data.speedMul) m *= e.data.speedMul;
+    if (e.data.chargeMul) m *= e.data.chargeMul;
     return m;
   };
   C.canAct = function (e) { return TT.isActive(e) && !e.status.stun; };
@@ -4648,7 +4649,7 @@ button { font-family: var(--font-body); color: var(--text); }
     def.category = 'aimed';
     def.trigger = 'timed';
     def.tags = (def.tags || []).concat(['aimed']);
-    def.detectMul = def.detectMul || 1.1;
+    def.detectMul = def.detectMul || 0.85;
     def.disarmMul = def.disarmMul || 0.8;
     def.disarmTime = def.disarmTime || 2.5;
     def.counters = def.counters || ['rogue', 'artificer'];
@@ -10286,6 +10287,7 @@ button { font-family: var(--font-body); color: var(--text); }
     return Math.min(3, Math.max(1.5, def.reach || def.blastRadius || 1.5));
   }
   function disarmable(h, t) {
+    if (!HA.hasToolkit(h)) return false;
     if (!t || t.disabled || !t.armed) return false;
     var def = TT.defs.traps[t.id] || {};
     if (def.undisarmable) return false;
@@ -10325,7 +10327,10 @@ button { font-family: var(--font-body); color: var(--text); }
    * and known wall traps (arrow slits) beside the tile the hero stands on. Uses the Defenses
    * difficulty hooks when present. Two fumbles on one mechanism and the hero leaves it be.
    */
+  /* A toolkit only lasts so long: two traps a raid, one more every four levels. */
+  HA.hasToolkit = function (h) { return (h.data.disarmsDone || 0) < 2 + Math.floor((h.level || 1) / 4); };
   HA.tryDisarm = function (h, ctx) {
+    if (!h.data.disarming && !HA.hasToolkit(h)) return false;
     var state = ctx.state, d = h.data;
     if (d.disarming) {
       var tr = findTrap(state, d.disarming);
@@ -11220,7 +11225,7 @@ button { font-family: var(--font-body); color: var(--text); }
   };
   /* Dread: a ramp in hero toughness as word of the barrow spreads. Heroes no longer retreat when hurt,
      so they die more often and pay out more; the ramp is high to make up for it. */
-  var DREAD_BASE = 1.05, DREAD_STEP = 0.07, DREAD_MAX = 2.5;
+  var DREAD_BASE = 1.2, DREAD_STEP = 0.27, DREAD_MAX = 6.5;
   SEASON.dread = function (state) {
     var r = Math.max(1, state.raidNum || 1);
     return Math.min(DREAD_MAX, DREAD_BASE + DREAD_STEP * (r - 1));
@@ -12144,7 +12149,7 @@ button { font-family: var(--font-body); color: var(--text); }
   'use strict';
   var H = TT.hooks, M = TT.meta;
   var G = TT.glory = TT.glory || {};
-  var WRATH_MAX = 10, WRATH_HP = 0.12, WRATH_DMG = 0.06, WRATH_SPEED = 0.015;
+  var WRATH_MAX = 10, WRATH_HP = 0.08, WRATH_DMG = 0.04, WRATH_SPEED = 0.015;
   var GRADE_INFAMY = { S: 8, A: 5, B: 2, C: 0 };
 
   function ext(state) {
@@ -12922,7 +12927,7 @@ button { font-family: var(--font-body); color: var(--text); }
     return rec;
   }
   function rankUp(state, rec, h, rnd) {
-    rec.rank = Math.min(MAX_RANK, rec.rank + 1);
+    rec.rank = Math.min(MAX_RANK, 2 + Math.floor(state.raidNum / 4), rec.rank + 1);
     rec.lastRaid = state.raidNum;
     if (rec.rank % 2 === 1) {
       var more = worstType(h, rec.resist.concat(rec.weak)) || pickNew(TYPES, rec.resist.concat(rec.weak), rnd);
@@ -12937,7 +12942,7 @@ button { font-family: var(--font-body); color: var(--text); }
     function hero(uid) { return raid.byUid[uid]; }
     rep.escapes.forEach(function (x) {
       var h = hero(x.uid), rec = g.active[x.heroId];
-      if (!h) return;
+      if (!h || x.fate === 'retreated') return;   // sitting out the clock earns nobody a name
       if (rec) {
         rankUp(st, rec, h, rnd);
         notes.push({ kind: 'rank', name: rec.name, rank: rec.rank });
@@ -13051,6 +13056,107 @@ button { font-family: var(--font-body); color: var(--text); }
 
   TT.addFilter('newRun', function (state) { ext(state); return state; }, 8);
   TT.events.on('runLoaded', function (e) { if (e && e.state) ext(e.state); });
+})(window.TT);
+
+</script>
+<script>/* src/systems/pressure.js */
+/*
+ * Tiny Tyrant — src/systems/pressure.js
+ * Headless-safe. Why a straight corridor full of traps is not enough:
+ *   Charge    a hero on a straight run picks up speed and is harder to hit. A turn resets it.
+ *   Wise      every hit from a type of trap teaches the whole party that type for the rest of the raid.
+ *             Reactions never get stale, so mixing traps beats repeating them.
+ *   Winding   the barrow is paid for its turns: more gold each night for a route that bends.
+ *
+ * Hero: h.data.run (straight tiles), h.data.chargeMul (read by combat.speedMul).
+ * Raid: raid.wise = {trapId: hits}.
+ * Events: 'heroCharging' {hero}, 'partyWise' {id, name, x, y}.
+ *
+ * TT.pressure API: chargeOf(hero), routeRuns(state) -> [{x, y, dx, dy, run}], turns(state), windingGold(state)
+ */
+(function (TT) {
+  'use strict';
+  var P = TT.pressure = {};
+  var CHARGE_FROM = 3, CHARGE_SPEED = 0.11, CHARGE_MAX_SPEED = 1.8, CHARGE_GUARD = 0.08, CHARGE_MAX_GUARD = 0.5;
+  var WISE_STEP = 0.035, WISE_FLOOR = 0.4, WISE_WARN = 0.7;
+  var GOLD_PER_TURN = 5, GOLD_TURN_CAP = 150;
+
+  P.chargeOf = function (h) { return Math.max(0, ((h.data && h.data.run) || 0) - CHARGE_FROM + 1); };
+  function speedFor(run) { return run >= CHARGE_FROM ? Math.min(CHARGE_MAX_SPEED, 1 + CHARGE_SPEED * (run - CHARGE_FROM + 1)) : 1; }
+
+  TT.events.on('tick', function (ctx) {
+    var raid = ctx.raid;
+    if (!raid || raid.over) return;
+    for (var i = 0; i < raid.heroes.length; i++) {
+      var h = raid.heroes[i], d = h.data;
+      if (!TT.isActive(h)) continue;
+      if (d.runX == null) { d.runX = h.tx; d.runY = h.ty; d.run = 0; d.runDx = 0; d.runDy = 0; d.runStill = 0; }
+      if (h.tx !== d.runX || h.ty !== d.runY) {
+        var dx = h.tx - d.runX, dy = h.ty - d.runY;
+        d.run = dx === d.runDx && dy === d.runDy ? d.run + 1 : 1;
+        d.runDx = dx; d.runDy = dy; d.runX = h.tx; d.runY = h.ty; d.runStill = 0;
+        if (d.run === CHARGE_FROM + 1) TT.events.emit('heroCharging', { hero: h, x: h.x, y: h.y, state: ctx.state });
+      } else {
+        d.runStill += ctx.dt;
+        if (d.runStill > 0.6) d.run = 0;
+      }
+      if (h.status.stun || h.status.web || d.shove) d.run = 0;
+      d.chargeMul = speedFor(d.run);
+    }
+  });
+
+  /* Wise applies first, then the charge, to everything a trap does directly. */
+  TT.addFilter('damage', function (amt, c) {
+    var t = c.target, cause = c.cause;
+    if (!t || t.kind !== 'hero' || !cause || cause.kind === 'hero' || cause.kind === 'minion') return amt;
+    var raid = c.state && c.state.raid;
+    if (cause.kind === 'trap' && !cause.rx && !cause.via && raid && raid.wise && raid.wise[cause.id]) {
+      amt *= Math.max(WISE_FLOOR, 1 - WISE_STEP * raid.wise[cause.id]);
+    }
+    if (cause.kind === 'trap' || cause.kind === 'reaction') {
+      var ch = P.chargeOf(t);
+      if (ch > 0) amt *= Math.max(CHARGE_MAX_GUARD, 1 - CHARGE_GUARD * ch);
+    }
+    return amt;
+  }, 29);
+  TT.events.on('heroDamaged', function (e) {
+    var c = e.cause, st = TT.state, raid = st && st.raid;
+    if (!raid || !c || c.kind !== 'trap' || c.rx || c.via) return;
+    var w = raid.wise || (raid.wise = {}), before = w[c.id] || 0;
+    w[c.id] = before + 1;
+    if (1 - WISE_STEP * before > WISE_WARN && 1 - WISE_STEP * w[c.id] <= WISE_WARN) {
+      TT.events.emit('partyWise', { id: c.id, name: c.name, x: e.x, y: e.y, state: st });
+    }
+  });
+
+  TT.events.on('trapDisarmed', function (e) { if (e && e.hero) e.hero.data.disarmsDone = (e.hero.data.disarmsDone || 0) + 1; });
+
+  /* ------------------------------------------------------------------ the shape of the route */
+  var cache = { rev: -1, grid: null, list: null };
+  function routeList(state) {
+    var g = state.grid;
+    if (cache.grid === g && cache.rev === g.rev) return cache.list;
+    var p = TT.path.find(g, g.entrance.x, g.entrance.y, g.treasure.x, g.treasure.y, {
+      cost: function (x, y) { return TT.grid.isWalkable(g, x, y) ? 1 : Infinity; }
+    }) || [], out = [], run = 0, pdx = 0, pdy = 0, px = g.entrance.x, py = g.entrance.y;
+    p.forEach(function (t) {
+      var dx = t.x - px, dy = t.y - py;
+      run = dx === pdx && dy === pdy ? run + 1 : 1;
+      out.push({ x: t.x, y: t.y, dx: dx, dy: dy, run: run, turned: run === 1 && (pdx !== 0 || pdy !== 0) });
+      pdx = dx; pdy = dy; px = t.x; py = t.y;
+    });
+    cache = { rev: g.rev, grid: g, list: out };
+    return out;
+  }
+  P.routeRuns = routeList;
+  P.turns = function (state) { return routeList(state).filter(function (t) { return t.turned; }).length; };
+  P.windingGold = function (state) { return Math.min(GOLD_TURN_CAP, P.turns(state) * GOLD_PER_TURN); };
+  P.CHARGE_FROM = CHARGE_FROM;
+
+  TT.addFilter('buildIncome', function (inc, ctx) {
+    if (ctx && ctx.state) inc.gold += P.windingGold(ctx.state);
+    return inc;
+  });
 })(window.TT);
 
 </script>
@@ -16461,6 +16567,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (a.ghost == null || a.ghost < e.hp) a.ghost = e.hp;
     else a.ghost = Math.max(e.hp, a.ghost - Math.max(e.maxHp * 0.5, 40) * Math.max(dt || 0, 0.016));
     var top = P.draw(ctx, e, e.rx * T, e.ry * T - 27);
+    if (e.data.chargeMul > 1.2 && TT.particles && dt > 0 && Math.random() < dt * 18) TT.particles.emit('dust', e.rx, e.ry + 0.2, { spread: 0.15 });
     if (e.kind !== 'hero') return;
     var marks = E.marks(e, TT.state && TT.state.raid ? TT.state.raid.t : 0), mx = e.rx * T - (marks.length - 1) * 4.5;
     marks.forEach(function (id, i) { IC.draw(ctx, id, mx + i * 9, top - 6, 3.6); });
@@ -16680,9 +16787,26 @@ button { font-family: var(--font-body); color: var(--text); }
     }
   }
 
+  /* Where the heroes will be charging: red arrows along every straight stretch of the route. */
+  function drawRuns(ctx, state, t) {
+    var P = TT.pressure;
+    P.routeRuns(state).forEach(function (r) {
+      if (r.run < P.CHARGE_FROM) return;
+      var heat = Math.min(1, (r.run - P.CHARGE_FROM + 1) / 6), cx = (r.x + 0.5) * T, cy = (r.y + 0.5) * T;
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(Math.atan2(r.dy, r.dx));
+      ctx.globalAlpha = 0.3 + 0.45 * heat + 0.1 * Math.sin(t * 5 - r.run);
+      ctx.strokeStyle = '#ff4a30'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-5, -6); ctx.lineTo(3, 0); ctx.lineTo(-5, 6); ctx.stroke();
+      ctx.restore();
+    });
+    ctx.globalAlpha = 1;
+  }
+
   TT.render.addLayer('overlay', function (ctx, state, info) {
     var t = info.t, hv = TT.render.hover, gh = TT.render.ghost;
     if (state.phase === 'build') {
+      drawRuns(ctx, state, t);
       state.traps.forEach(function (tp) {
         var def = TT.defs.traps[tp.id];
         if (!A.isAimed(def)) return;
@@ -23083,6 +23207,8 @@ button { font-family: var(--font-body); color: var(--text); }
     gold.style.cssText = 'display:inline-block;width:6px;height:8px;background:#ffd24a;margin-left:14px';
     key.appendChild(gold);
     ui.el('span', null, '= 100', key);
+    ui.el('div', 'key', '<span style="color:#ff4a30;font-size:18px">&raquo;&raquo;</span> Heroes charge down straight tunnels. Turns pay gold.', chart);
+    ui.el('div', 'key', 'Heroes grow wise to a trap each time it hits. Mix them.', chart);
     var close = ui.el('button', 'tt-btn', 'Back', chart);
     close.addEventListener('click', function () { ui.click(); chart.remove(); chart = null; });
   }
@@ -23134,6 +23260,12 @@ button { font-family: var(--font-body); color: var(--text); }
       if (seen && !seen[e.name] && e.power >= 2) { seen[e.name] = 1; J.banner(e.name, 'streak'); }
     }
     if (TT.audio && SOUND[e.name]) TT.audio.play(SOUND[e.name], { x: e.x, y: e.y });
+  });
+  TT.events.on('heroCharging', function (e) {
+    if (e.state === TT.state && P()) P().text(e.x, e.y - 0.8, 'CHARGE', '#ff6a48', false, 11);
+  });
+  TT.events.on('partyWise', function (e) {
+    if (e.state === TT.state && P()) P().text(e.x, e.y - 1, 'WISE TO ' + String(e.name).toUpperCase(), '#c8c0b0', true, 12);
   });
   TT.events.on('nemesisArrives', function (e) {
     if (e.state !== TT.state || !J || !J.enabled) return;
