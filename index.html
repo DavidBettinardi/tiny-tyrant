@@ -11563,6 +11563,7 @@ button { font-family: var(--font-body); color: var(--text); }
       ascensionPick: {},   // bossId -> Ascension last chosen on the boss-select screen
       tree: {},            // pathId -> tier choices (src/systems/pacts.js)
       conquest: {}, pendingCrush: '', bossXp: {}, bossTree: {},  // src/systems/conquest.js
+      tutorial: '', tips: {},   // src/ui/tutorial.js: '' until decided, 'done', or 'again'
       ach: {}, achStats: {}, best: {}                          // src/systems/achievements.js
     };
   }
@@ -25511,6 +25512,157 @@ button { font-family: var(--font-body); color: var(--text); }
     if (center) { scoreEl = document.createElement('div'); scoreEl.id = 'tt-score'; center.appendChild(scoreEl); }
     bandEl = ui.el('div', 'hidden', null, document.getElementById('ui')); bandEl.id = 'tt-band';
     setInterval(sync, 120);
+  });
+})(window.TT);
+
+</script>
+<script>/* src/ui/tutorial.js */
+/*
+ * Tiny Tyrant — src/ui/tutorial.js
+ * The first night teaches by doing: each step names one thing, points at it, and moves on when you have done it.
+ * After that, one-line tips appear the first time something new happens, once ever.
+ * Saved in TT.meta.data: tutorial ('' | 'done' | 'again'), tips {id: true}. Anyone who has already finished a reign skips it. TT.tutorial API: restart().
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  var ui = TT.ui, S = ui.screens, M = TT.meta;
+  var box = null, stepNo = -1, lit = [], tipTimer = 0, tipOn = false, startDug = 0;
+
+  var CSS = [
+    '#tt-coach{position:absolute;left:50%;top:108px;transform:translateX(-50%);z-index:38;display:flex;align-items:center;gap:12px;width:min(560px,calc(100vw - 24px));padding:10px 14px;background:#1c1420;border:2px solid #e9a55f;border-radius:6px;box-shadow:0 0 22px rgba(233,165,95,.45);color:var(--text);font-size:15px;line-height:1.35}',
+    '#tt-coach .tx{flex:1}',
+    '#tt-coach .n{display:block;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:#e9a55f}',
+    '#tt-coach button{min-height:40px;padding:0 12px;cursor:pointer;background:transparent;border:1px solid var(--edge);border-radius:3px;color:var(--text);font-family:var(--font-body);font-size:13px;white-space:nowrap}',
+    '#tt-coach button.go{border-color:#e9a55f;background:rgba(233,165,95,.16)}',
+    '.tt-lit{outline:3px solid #ffd24a!important;outline-offset:2px;animation:ttlit 1s ease-in-out infinite!important}',
+    '@keyframes ttlit{50%{outline-color:#ff8a2a;box-shadow:0 0 18px #ffb040}}'
+  ].join('');
+
+  function data() { return M.data; }
+  function isDone() { var d = data(); return d.tutorial === 'done' || (d.tutorial === '' && d.runs > 0); }
+  function tips() { var d = data(); if (!d.tips || typeof d.tips !== 'object') d.tips = {}; return d.tips; }
+  function st() { return TT.state; }
+  function built(id) { return st().traps.filter(function (t) { return t.id === id; }).length; }
+  function dug() {
+    var g = st().grid, n = 0;
+    for (var i = 0; i < g.tiles.length; i++) if (g.tiles[i] === TT.TILES.FLOOR) n++;
+    return n;
+  }
+  function toolByName(name) {
+    var all = document.querySelectorAll('#toolbar .tool');
+    for (var i = 0; i < all.length; i++) {
+      var nm = all[i].querySelector('.nm');
+      if (nm && nm.textContent.indexOf(name) === 0) return all[i];
+    }
+    return null;
+  }
+  function tabByName(name) {
+    var all = document.querySelectorAll('#toolbar .tb-tab');
+    for (var i = 0; i < all.length; i++) if (all[i].textContent === name) return all[i];
+    return null;
+  }
+  /* The tool itself if it is showing, otherwise the tab it lives under. */
+  function pointTrap(name, tab) { return toolByName(name) || tabByName(tab); }
+
+  var STEPS = [
+    { text: 'Heroes come in the door, grab gold from your hoard and carry it out. Lose all your gold and the reign is over.', button: 'Got it' },
+    { text: 'Pick the Spike Pit and put it on the corridor, where the heroes walk.', point: function () { return pointTrap('Spike Pit', 'Floor'); }, done: function () { return built('spike_pit') > 0; } },
+    { text: 'Traps combine. Pick Poison Gas and place it two tiles from a Flame Vent. A glowing link means they react.', point: function () { return built('poison_gas') ? pointTrap('Flame Vent', 'Floor') : pointTrap('Poison Gas', 'Area'); }, done: function () { return built('poison_gas') > 0 && built('flame_vent') > 0; }, also: 'flame' },
+    { text: 'Red arrows mean heroes charge: straight tunnels make them fast and hard to hurt. Pick Dig and carve a few tiles off the corridor. Bends are your friend.', point: function () { return toolByName('Dig'); }, done: function () { return dug() >= startDug + 3; } },
+    { text: 'Ready. Start the raid. Kill thieves before they reach the door and the gold comes back.', point: function () { return document.querySelector('#hud-top .primary') || document.getElementById('hudbtn-start'); }, done: function () { return st().phase === 'raid'; } },
+    { text: 'Your boss has spells at the bottom of the screen. Tap one, then tap where it should land.', point: function () { return document.querySelector('.spells .spell'); }, button: 'Got it', raid: true }
+  ];
+
+  function unlight() { lit.forEach(function (e) { e.classList.remove('tt-lit'); }); lit = []; }
+  function light(e) { if (e) { e.classList.add('tt-lit'); lit.push(e); } }
+  function finish() {
+    data().tutorial = 'done';
+    M.save();
+    stepNo = -1;
+    unlight();
+    if (box) box.classList.add('hidden');
+  }
+  function render(s) {
+    box.innerHTML = '<div class="tx"><span class="n">' + (stepNo + 1) + ' of ' + STEPS.length + '</span>' + ui.esc(s.text) + '</div>';
+    if (s.button) {
+      var b = ui.el('button', 'go', ui.esc(s.button), box);
+      b.addEventListener('click', function () { ui.click(); advance(); });
+    }
+    var skip = ui.el('button', null, 'Skip', box);
+    skip.addEventListener('click', function () { ui.click(); finish(); });
+    box.classList.remove('hidden');
+  }
+  function advance() {
+    stepNo++;
+    if (stepNo >= STEPS.length) { finish(); return; }
+    if (stepNo === 3) startDug = dug();
+    render(STEPS[stepNo]);
+  }
+  function blocked() {
+    return S.isOpen() || document.querySelector('#tt-book:not(.hidden)') || document.getElementById('tt-evo') || document.getElementById('tt-intro');
+  }
+  function sync() {
+    if (!box || tipOn) return;
+    var state = st();
+    if (!state || !ui.hud.visible || isDone()) { if (!tipOn) box.classList.add('hidden'); unlight(); return; }
+    if (state.raidNum > 1) { finish(); return; }
+    if (blocked()) { box.classList.add('hidden'); unlight(); return; }
+    if (stepNo < 0) { advance(); return; }
+    var s = STEPS[stepNo];
+    box.classList.remove('hidden');
+    if (s.done && s.done()) { advance(); s = STEPS[stepNo]; if (!s) return; }
+    unlight();
+    if (s.point) light(s.point());
+  }
+  TT.tutorial = {
+    restart: function () { data().tutorial = 'again'; data().tips = {}; stepNo = -1; M.save(); }
+  };
+  TT.events.on('runStart', function () { stepNo = -1; });
+
+  /* ------------------------------------------------------------------ one-time tips */
+  function tip(id, text) {
+    if (!box || tips()[id] || !isDone() || tipOn || blocked() || !ui.hud.visible) return;
+    tips()[id] = true;
+    M.save();
+    tipOn = true;
+    box.innerHTML = '<div class="tx">' + ui.esc(text) + '</div>';
+    var b = ui.el('button', null, 'OK', box);
+    function close() { clearTimeout(tipTimer); tipOn = false; box.classList.add('hidden'); }
+    b.addEventListener('click', function () { ui.click(); close(); });
+    box.classList.remove('hidden');
+    tipTimer = setTimeout(close, 8000);
+  }
+  function mine(e) { return !e || !e.state || e.state === st(); }
+  TT.events.on('lootTaken', function (e) { if (mine(e)) tip('loot', 'A thief has your gold. Kill them before they reach the door and it comes back.'); });
+  TT.events.on('partyWise', function (e) { if (mine(e)) tip('wise', 'Heroes are getting wise to that trap: it hits softer for the rest of the raid. Mix your traps.'); });
+  TT.events.on('nemesisArrives', function (e) { if (mine(e)) tip('nemesis', 'A nemesis: this hero escaped and came back stronger. Kill them for the bounty.'); });
+  TT.events.on('bossDeath', function (e) { if (mine(e)) tip('bossfell', 'Your boss fell. The heroes ransack the hoard, but your boss returns next raid, hurt.'); });
+  function nightTips() {
+    var state = st();
+    if (!state || state.phase !== 'build' || !isDone()) return;
+    if (state.raidNum >= 2) tip('works', 'New: the Works tab has buildings. Put them in side rooms, off the heroes\' route.');
+    if (TT.warbands.current(state)) tip('band', 'The sign at the top shows who comes next: what they resist and what they fear.');
+    if (TT.nemesis.upNext(state).length) tip('wanted', 'The Wanted poster shows a returning nemesis. Hit their weakness.');
+    if (TT.pressure.trapsBuilt(state) >= TT.pressure.trapLimit(state)) tip('limit', 'Trap limit reached. It grows every raid. Choose where each trap goes.');
+    if (state.traps.some(function (t) { return TT.pressure.crowding(state, t.x, t.y, t) >= TT.pressure.CROWD_FROM; })) tip('crowd', 'An eye means traps are packed too close: heroes spot them sooner. Space them out.');
+  }
+
+  TT.events.on('screenShow', function (e) {
+    if (e.name !== 'help') return;
+    var row = document.querySelector('.scr .row');
+    if (!row) return;
+    var b = document.createElement('button');
+    b.className = 'tt-btn';
+    b.textContent = 'Replay Tutorial';
+    b.addEventListener('click', function () { ui.click(); TT.tutorial.restart(); ui.toast('The tutorial plays in your next new game.', 'good'); });
+    row.insertBefore(b, row.firstChild);
+  });
+  TT.events.on('uiReady', function () {
+    var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
+    box = ui.el('div', 'hidden', null, document.getElementById('ui')); box.id = 'tt-coach';
+    setInterval(sync, 250);
+    setInterval(nightTips, 1000);
   });
 })(window.TT);
 
