@@ -11562,7 +11562,7 @@ button { font-family: var(--font-body); color: var(--text); }
       ascension: {},       // bossId -> highest Ascension unlocked (src/systems/ascension.js)
       ascensionPick: {},   // bossId -> Ascension last chosen on the boss-select screen
       tree: {},            // pathId -> tier choices (src/systems/pacts.js)
-      conquest: {}, bossXp: {}, bossTree: {},  // src/systems/conquest.js
+      conquest: {}, pendingCrush: '', bossXp: {}, bossTree: {},  // src/systems/conquest.js
       ach: {}, achStats: {}, best: {}                          // src/systems/achievements.js
     };
   }
@@ -14081,34 +14081,35 @@ button { font-family: var(--font-body); color: var(--text); }
 /*
  * Tiny Tyrant — src/systems/conquest.js
  * Headless-safe. What lasts between reigns:
- *   Conquest   a world map of regions with their own rules. Reach raid 10 for a foothold, which opens the
- *              neighbours; survive all 20 raids to take the region and its permanent reward.
+ *   Conquest   a single road of regions, each with its own rules and its own kind of hero. Survive all 20 raids
+ *              to crush a region, take its reward and march on to the next.
  *   Boss trees each boss levels up with the raids it survives, and each level opens a choice of two.
  *
- * All of it lives in TT.meta.data: conquest {regionId: {foothold, taken, boss}}, bossXp {bossId: xp},
+ * All of it lives in TT.meta.data: conquest {regionId: {taken, boss}}, pendingCrush: regionId, bossXp {bossId: xp},
  * bossTree {bossId: ['a'|'b'|null, ...]}.
  * A reign keeps its rules in state.ext.region = regionId.
  *
- * TT.conquest API: REGIONS, region(id), status(id), isOpen(id), taken(), picked, pick(id)
+ * TT.conquest API: REGIONS, region(id), status(id), current(), taken(), picked
  *   bossLevel(id), TREE, treeChoice(bossId, tier), treeChoose(bossId, tier, opt), treeOpen(bossId, tier)
  */
 (function (TT) {
   'use strict';
   var M = TT.meta, H = TT.hooks;
-  var C = TT.conquest = { picked: 'barrow_downs' };
+  var C = TT.conquest = {};
 
+  /* In marching order. foes are the classes the region sends far more of. */
   C.REGIONS = [
-    { id: 'barrow_downs', name: 'Barrow Downs', x: 12, y: 54, links: ['black_fen', 'iron_deep'], tier: 0, rule: 'No special rules.', reward: { startGold: 80 }, rewardText: '+80 starting gold' },
-    { id: 'black_fen', name: 'Black Fen', x: 28, y: 28, links: ['barrow_downs', 'storm_coast', 'saints_march'], tier: 1, rule: 'Heroes 10% slower. Lightning +25%.', reward: { boss: 'drowned_queen' }, rewardText: 'The Drowned Queen' },
-    { id: 'iron_deep', name: 'Iron Deep', x: 28, y: 78, links: ['barrow_downs', 'ember_pass', 'saints_march'], tier: 1, rule: 'Digging is half price. Parties +1.', reward: { boss: 'clockwork_warden' }, rewardText: 'The Clockwork Warden' },
-    { id: 'saints_march', name: 'Saint\'s March', x: 44, y: 54, links: ['black_fen', 'iron_deep', 'gilded_coast', 'bonefield'], tier: 2, rule: 'Heroes have 15% more health.', reward: { hoard: 200 }, rewardText: '+200 starting hoard' },
-    { id: 'storm_coast', name: 'Storm Coast', x: 46, y: 14, links: ['black_fen', 'gilded_coast'], tier: 2, rule: 'Trap reactions deal 40% more damage, to everyone\'s delight.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
-    { id: 'ember_pass', name: 'Ember Pass', x: 46, y: 90, links: ['iron_deep', 'bonefield'], tier: 2, rule: 'Fire +30%. Heroes burn longer.', reward: { souls: 3 }, rewardText: '+3 starting souls' },
-    { id: 'gilded_coast', name: 'Gilded Coast', x: 64, y: 30, links: ['storm_coast', 'saints_march', 'frostmarch'], tier: 3, rule: 'Thieves take 30% more. Kills pay 50% more.', reward: { boss: 'gilded_baron' }, rewardText: 'The Gilded Baron' },
-    { id: 'bonefield', name: 'Bonefield', x: 64, y: 74, links: ['saints_march', 'ember_pass', 'warlords_road'], tier: 3, rule: 'Minions cost 30% less. Parties +2.', reward: { minionHp: 0.1 }, rewardText: 'Minions +10% health' },
-    { id: 'frostmarch', name: 'Frostmarch', x: 80, y: 44, links: ['gilded_coast', 'warlords_road', 'capital'], tier: 4, rule: 'Frost +30%. Income 20% lower.', reward: { startGold: 150 }, rewardText: '+150 starting gold' },
-    { id: 'warlords_road', name: 'Warlord\'s Road', x: 80, y: 84, links: ['bonefield', 'frostmarch', 'capital'], tier: 4, rule: 'Every raid is elite.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
-    { id: 'capital', name: 'The Capital', x: 94, y: 62, links: ['frostmarch', 'warlords_road'], tier: 6, rule: 'The last city. Everything at once.', reward: { hoard: 400 }, rewardText: '+400 starting hoard' }
+    { id: 'barrow_downs', name: 'Barrow Downs', x: 6, y: 50, tier: 0, foeName: 'Local adventurers', foes: ['knight', 'rogue', 'ranger', 'burglar'], rule: 'No special rules.', reward: { startGold: 80 }, rewardText: '+80 starting gold' },
+    { id: 'black_fen', name: 'Black Fen', x: 15, y: 26, tier: 1, foeName: 'Fen hunters', foes: ['ranger', 'beastmaster', 'plague_doctor', 'pathfinder'], rule: 'Heroes 10% slower. Lightning +25%.', reward: { boss: 'drowned_queen' }, rewardText: 'The Drowned Queen' },
+    { id: 'iron_deep', name: 'Iron Deep', x: 25, y: 70, tier: 1, foeName: 'Miners and machinists', foes: ['dwarf', 'delver', 'artificer', 'ogre'], rule: 'Digging is half price. Parties +1.', reward: { boss: 'clockwork_warden' }, rewardText: 'The Clockwork Warden' },
+    { id: 'saints_march', name: 'Saint\'s March', x: 35, y: 34, tier: 2, foeName: 'The faithful', foes: ['cleric', 'paladin', 'templar', 'monk'], rule: 'Heroes have 15% more health.', reward: { hoard: 200 }, rewardText: '+200 starting hoard' },
+    { id: 'storm_coast', name: 'Storm Coast', x: 45, y: 74, tier: 2, foeName: 'Storm mages', foes: ['stormcaller', 'mage', 'enchanter', 'bard'], rule: 'Combos deal 40% more damage.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
+    { id: 'ember_pass', name: 'Ember Pass', x: 54, y: 30, tier: 2, foeName: 'Fire brigands', foes: ['alchemist', 'hexblade', 'ogre', 'mage'], rule: 'Fire +30%.', reward: { souls: 3 }, rewardText: '+3 starting souls' },
+    { id: 'gilded_coast', name: 'Gilded Coast', x: 63, y: 72, tier: 3, foeName: 'Thieves\' guild', foes: ['rogue', 'burglar', 'duelist', 'cartographer'], rule: 'Thieves take 30% more. Kills pay 50% more.', reward: { boss: 'gilded_baron' }, rewardText: 'The Gilded Baron' },
+    { id: 'bonefield', name: 'Bonefield', x: 72, y: 30, tier: 3, foeName: 'Grave wardens', foes: ['gravebinder', 'templar', 'sentinel', 'cleric'], rule: 'Minions cost 30% less. Parties +2.', reward: { minionHp: 0.1 }, rewardText: 'Minions +10% health' },
+    { id: 'frostmarch', name: 'Frostmarch', x: 80, y: 72, tier: 4, foeName: 'Frost guard', foes: ['frost_warden', 'sentinel', 'monk', 'knight'], rule: 'Frost +30%. Income 20% lower.', reward: { startGold: 150 }, rewardText: '+150 starting gold' },
+    { id: 'warlords_road', name: 'Warlord\'s Road', x: 87, y: 32, tier: 4, foeName: 'The warlord\'s army', foes: ['knight', 'ogre', 'duelist', 'sentinel'], rule: 'Every raid is elite.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
+    { id: 'capital', name: 'The Capital', x: 95, y: 62, tier: 6, foeName: 'The royal host', foes: ['paladin', 'inquisitor', 'templar', 'knight', 'mage'], rule: 'The last city. Everything at once.', reward: { hoard: 400 }, rewardText: '+400 starting hoard' }
   ];
   var BY = {};
   C.REGIONS.forEach(function (r) { BY[r.id] = r; });
@@ -14122,12 +14123,13 @@ button { font-family: var(--font-body); color: var(--text); }
     return d;
   }
   C.status = function (id) { return data().conquest[id] || {}; };
-  C.isOpen = function (id) {
-    if (id === 'barrow_downs') return true;
-    return BY[id].links.some(function (l) { var s = C.status(l); return s.foothold || s.taken; });
+  /* The first region not yet crushed; the last one once all have fallen. */
+  C.current = function () {
+    for (var i = 0; i < C.REGIONS.length; i++) if (!C.status(C.REGIONS[i].id).taken) return C.REGIONS[i];
+    return C.REGIONS[C.REGIONS.length - 1];
   };
+  Object.defineProperty(C, 'picked', { get: function () { return C.current().id; } });
   C.taken = function () { return C.REGIONS.filter(function (r) { return C.status(r.id).taken; }); };
-  C.pick = function (id) { if (BY[id] && C.isOpen(id)) C.picked = id; };
 
   function rewards() {
     var out = { startGold: 0, hoard: 0, souls: 0, trapDmg: 0, minionHp: 0 };
@@ -14152,10 +14154,19 @@ button { font-family: var(--font-body); color: var(--text); }
     return state;
   }, 20);
 
+  /* Each region sends its own kind of hero. */
+  var baseWeights = TT.roster.classWeights;
+  TT.roster.classWeights = function (state) {
+    var w = baseWeights(state), r = BY[rid(state)];
+    if (!r) return w;
+    Object.keys(w).forEach(function (k) { w[k] *= r.foes.indexOf(k) >= 0 ? 6 : 0.25; });
+    return w;
+  };
+
   /* Further regions make every hero tougher; that is what the better rewards pay for. */
   TT.addFilter('heroStats', function (h, ctx) {
     var st = ctx && ctx.state, r = rid(st), t = tierOf(st);
-    if (t) { h.maxHp = Math.round(h.maxHp * (1 + 0.07 * t)); h.hp = h.maxHp; }
+    if (t) { h.maxHp = Math.round(h.maxHp * (1 + 0.05 * t)); h.hp = h.maxHp; }
     if (r === 'saints_march' || capital(st)) { h.maxHp = Math.round(h.maxHp * 1.15); h.hp = h.maxHp; }
     if (r === 'black_fen') h.data.speedMul = (h.data.speedMul || 1) * 0.9;
     return h;
@@ -14283,17 +14294,16 @@ button { font-family: var(--font-body); color: var(--text); }
     if (!st) return;
     var d = data(), raids = (st.history || []).length, r = rid(st) || 'barrow_downs';
     var cq = d.conquest[r] || (d.conquest[r] = {});
-    var res = { region: r, wasTaken: !!cq.taken, wasFoothold: !!cq.foothold };
-    if (raids >= 10) cq.foothold = true;
+    var res = { region: r, wasTaken: !!cq.taken };
     if (e.outcome === 'victory') { cq.taken = true; cq.boss = st.bossId; }
     var gained = raids + (e.outcome === 'victory' ? 12 : 0) + tierOf(st) * 2;
     var before = C.bossLevel(st.bossId);
     d.bossXp[st.bossId] = (d.bossXp[st.bossId] || 0) + gained;
     res.bossXp = gained; res.levelUp = C.bossLevel(st.bossId) > before ? C.bossLevel(st.bossId) : 0;
-    res.foothold = cq.foothold && !res.wasFoothold;
     res.taken = cq.taken && !res.wasTaken;
     var rg = BY[r];
     if (res.taken && rg.reward.boss) d.owned['boss:' + rg.reward.boss] = true;
+    if (res.taken) d.pendingCrush = r;
     C.lastResult = res;
     M.save();
     TT.events.emit('unlocksChanged', { key: null });
@@ -24992,14 +25002,33 @@ button { font-family: var(--font-body); color: var(--text); }
     '.cq-scr{width:min(860px,calc(100vw - 24px))}',
     '.cq-map{position:relative;width:100%;aspect-ratio:16/8;margin:6px 0 10px;background:radial-gradient(circle at 20% 60%,#2a1d2c,#120c16 70%);border:1px solid var(--edge);border-radius:6px;overflow:hidden}',
     '.cq-map svg{position:absolute;inset:0;width:100%;height:100%}',
-    '.cq-node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:2px;padding:0;background:none;border:none;cursor:pointer;color:var(--text);font-family:var(--font-body);font-size:12px;min-height:44px;min-width:60px}',
-    '.cq-node i{display:block;width:26px;height:26px;transform:rotate(45deg);background:#2a2230;border:2px solid #5a4a60;transition:transform .15s}',
-    '.cq-node:hover:not(:disabled) i{transform:rotate(45deg) scale(1.2)}',
-    '.cq-node:disabled{opacity:.35;cursor:default}',
-    '.cq-node.foot i{background:#6a4a1c;border-color:#e9a55f}',
-    '.cq-node.taken i{background:#ffd24a;border-color:#fff0c0;box-shadow:0 0 16px #ffb030}',
-    '.cq-node.sel i{outline:2px solid #fff;outline-offset:4px}',
-    '.cq-node span{margin-top:7px;white-space:nowrap;text-shadow:0 1px 3px #000}',
+    '.cq-node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:1px;color:var(--text);font-family:var(--font-body);font-size:12px;width:90px;pointer-events:none}',
+    '.cq-node i{display:block;width:44px;height:44px}',
+    '.cq-node svg{width:100%;height:100%;display:block}',
+    '.cq-node span{white-space:nowrap;text-shadow:0 1px 3px #000}',
+    '.cq-node.locked{opacity:.4;filter:grayscale(.7)}',
+    '.cq-node.crushed span{color:var(--text-faint);text-decoration:line-through}',
+    '.cq-node.cur i{filter:drop-shadow(0 0 10px #ff9a40);animation:cqglow 1.4s ease-in-out infinite}',
+    '@keyframes cqglow{50%{transform:scale(1.1)}}',
+    '.cq-node.hit i{animation:cqhit .5s ease-out}',
+    '@keyframes cqhit{0%{transform:scale(1.6)}100%{transform:none}}',
+    '.cq-node.wake{animation:ttpop .5s cubic-bezier(.2,1.5,.4,1)}',
+    '.cq-token{position:absolute;z-index:3;width:56px;height:56px;margin:-62px 0 0 -28px;transition:left 1.3s ease-in-out,top 1.3s ease-in-out;filter:drop-shadow(0 4px 6px #000)}',
+    '.cq-token canvas{width:56px;height:56px;animation:cqbob 1.2s ease-in-out infinite}',
+    '@keyframes cqbob{50%{transform:translateY(-4px)}}',
+    '.cq-token.walk canvas{animation:cqwalk .3s ease-in-out infinite}',
+    '@keyframes cqwalk{50%{transform:translateY(-7px) rotate(4deg)}}',
+    '.cq-token.stomp canvas{animation:cqstomp .95s cubic-bezier(.5,0,.8,.4) forwards}',
+    '@keyframes cqstomp{0%{transform:none}45%{transform:translateY(-70px) scale(1.5)}50%{transform:translateY(-70px) scale(1.5)}100%{transform:translateY(46px) scale(2.1)}}',
+    '.cq-map.shake{animation:cqshake .5s linear}',
+    '@keyframes cqshake{20%{transform:translate(-7px,5px)}40%{transform:translate(6px,-5px)}60%{transform:translate(-4px,-3px)}80%{transform:translate(3px,3px)}}',
+    '.cq-shard{position:absolute;z-index:2;width:7px;height:7px;background:#8a6a50;box-shadow:0 0 6px #ff7a20;transition:transform .85s cubic-bezier(.2,.7,.4,1),opacity .85s}',
+    '.cq-banner{position:absolute;left:0;right:0;top:40%;z-index:4;text-align:center;animation:ttslam 1.9s cubic-bezier(.2,1.3,.4,1) forwards;pointer-events:none}',
+    '.cq-banner b{display:block;font-family:var(--font-display);font-weight:normal;font-size:clamp(26px,5vw,48px);letter-spacing:.08em;text-transform:uppercase;color:#ffe2a8;text-shadow:0 0 28px #ff7a20,0 3px 0 #000}',
+    '.cq-banner small{font-size:16px;color:#ffd24a;text-shadow:0 2px 3px #000}',
+    '.cq-foes{display:flex;flex-wrap:wrap;align-items:center;gap:3px;margin-top:4px;font-size:13px;color:#ffb080}',
+    '.cq-foes span{margin-right:6px}',
+    '.cq-foes canvas{width:30px;height:30px}',
     '.cq-info{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;background:var(--panel);border:1px solid var(--edge);border-radius:4px}',
     '.cq-info h3{margin:0;font-weight:normal;font-size:18px}',
     '.cq-info p{margin:2px 0 0;font-size:13px;color:var(--text-dim)}',
@@ -25029,40 +25058,107 @@ button { font-family: var(--font-body); color: var(--text); }
     '.go-gain div{margin-bottom:4px}'
   ].join('');
 
-  /* ------------------------------------------------------------------ the map */
+  /* ------------------------------------------------------------------ the road */
+  var CASTLE = '<svg viewBox="0 0 32 32"><path fill="#6a5a70" stroke="#2a2030" d="M5 28V11h4v3h4v-3h6v3h4v-3h4v17z"/><path fill="#1a1420" d="M13 28v-7a3 3 0 0 1 6 0v7z"/><path fill="#c04a30" d="M16 2l6 3-6 3z"/><path stroke="#2a2030" d="M16 2v9"/></svg>';
+  var RUIN = '<svg viewBox="0 0 32 32"><path fill="#2a2228" stroke="#120c14" d="M3 28l3-8 3 3 2-9 3 7 4-5 2 6 4-4 2 3 3 7z"/><path fill="#ff7a20" d="M10 24c-2-3 1-5 1-8 3 2 4 5 2 8zM21 25c-2-3 0-4 1-7 2 2 3 4 1 7z"/><path fill="#ffd24a" d="M11 24c-1-2 0-3 1-4 1 1 1 3 0 4zM22 25c-1-2 0-3 0-4 1 1 2 3 0 4z"/></svg>';
+  function bossForToken() {
+    var h = TT.meta.data.history[0], id = h && TT.defs.bosses[h.bossId] ? h.bossId : 'lich';
+    return id;
+  }
+  function placeToken(t, r) { t.style.left = r.x + '%'; t.style.top = r.y + '%'; }
+  function makeNode(map, r, state) {
+    var n = ui.el('div', 'cq-node ' + state, '<i>' + (state === 'crushed' ? RUIN : CASTLE) + '</i><span>' + ui.esc(r.name) + '</span>', map);
+    n.style.left = r.x + '%'; n.style.top = r.y + '%';
+    return n;
+  }
+  function shards(map, r) {
+    for (var i = 0; i < 18; i++) (function (k) {
+      var s = document.createElement('b'), a = k * 0.35 + Math.random(), d = 60 + Math.random() * 110;
+      s.className = 'cq-shard';
+      s.style.left = r.x + '%'; s.style.top = r.y + '%';
+      map.appendChild(s);
+      setTimeout(function () {
+        s.style.transform = 'translate(' + Math.cos(a) * d + 'px,' + (Math.sin(a) * d + 30) + 'px) rotate(' + (a * 300) + 'deg)';
+        s.style.opacity = '0';
+      }, 20);
+      setTimeout(function () { s.remove(); }, 900);
+    })(i);
+  }
+  /* The boss stomps the region flat, then walks on to the next one. */
+  function crush(map, token, node, r, next, go, done) {
+    var wait = function (ms, fn) { setTimeout(function () { if (map.isConnected) fn(); }, ms); };
+    go.disabled = true;
+    wait(500, function () { token.classList.add('stomp'); });
+    wait(950, function () {
+      node.querySelector('i').innerHTML = RUIN;
+      node.classList.remove('cur'); node.classList.add('crushed', 'hit');
+      map.classList.add('shake');
+      shards(map, r);
+      if (TT.audio) TT.audio.play('trapCollapse', {});
+      if (J) J.flash('rgba(255,120,40,.9)', 0.6);
+      ui.el('div', 'cq-banner', '<b>' + ui.esc(r.name) + ' crushed</b><small>' + ui.esc(r.rewardText) + '</small>', map);
+    });
+    wait(1500, function () { token.classList.remove('stomp'); map.classList.remove('shake'); });
+    wait(2900, function () {
+      var b = map.querySelector('.cq-banner');
+      if (b) b.remove();
+      if (next) { token.classList.add('walk'); placeToken(token, next); } else if (J) J.confetti();
+    });
+    wait(4300, function () {
+      token.classList.remove('walk');
+      if (next) {
+        var nn = map.querySelector('[data-id="' + next.id + '"]');
+        if (nn) { nn.classList.remove('locked'); nn.classList.add('cur', 'wake'); }
+      }
+      go.disabled = false;
+      done();
+    });
+  }
   S.register('conquest', {
     render: function (el, p, a) {
       el.classList.add('cq-scr');
-      ui.el('h2', null, 'Conquest', el);
-      ui.el('div', 'cq-sum', C.taken().length + ' / ' + C.REGIONS.length + ' regions', el);
-      var map = ui.el('div', 'cq-map', null, el), lines = '', done = {};
-      C.REGIONS.forEach(function (r) {
-        r.links.forEach(function (l) {
-          var k = [r.id, l].sort().join();
-          if (done[k]) return;
-          done[k] = 1;
-          var o = C.region(l), open = C.isOpen(r.id) && C.isOpen(l);
-          lines += '<line x1="' + r.x + '" y1="' + r.y + '" x2="' + o.x + '" y2="' + o.y + '" stroke="' + (open ? '#8a6a3a' : '#3a2e3e') + '" stroke-width="0.35" stroke-dasharray="1 1" vector-effect="none"/>';
-        });
-      });
+      ui.el('h2', null, 'The Road', el);
+      ui.el('div', 'cq-sum', C.taken().length + ' / ' + C.REGIONS.length + ' crushed', el);
+      var map = ui.el('div', 'cq-map', null, el), d = TT.meta.data, pending = C.region(d.pendingCrush);
+      var cur = C.current(), allDone = C.taken().length >= C.REGIONS.length;
+      // the region falling now still stands until the animation hits it
+      var lines = '', road = C.REGIONS.map(function (r) { return r.x + ',' + r.y; }).join(' ');
+      lines = '<polyline points="' + road + '" fill="none" stroke="#8a6a3a" stroke-width="0.8" stroke-dasharray="1.6 1.2" vector-effect="none"/>';
       var svg = ui.el('div', null, '<svg viewBox="0 0 100 100" preserveAspectRatio="none">' + lines + '</svg>', map);
       svg.style.cssText = 'position:absolute;inset:0';
-      if (!C.isOpen(C.picked)) C.picked = 'barrow_downs';
+      var pendingNode = null;
       C.REGIONS.forEach(function (r) {
-        var s = C.status(r.id);
-        var n = ui.el('button', 'cq-node' + (s.taken ? ' taken' : s.foothold ? ' foot' : '') + (C.picked === r.id ? ' sel' : ''), '<i></i><span>' + ui.esc(r.name) + '</span>', map);
-        n.style.left = r.x + '%'; n.style.top = r.y + '%';
-        n.disabled = !C.isOpen(r.id);
-        n.addEventListener('click', function () { ui.click(); C.pick(r.id); S.show('conquest', p); });
+        var taken = C.status(r.id).taken, falling = pending && pending.id === r.id, state;
+        if (falling) state = 'cur';
+        else if (taken) state = 'crushed';
+        else if (r.id === cur.id && !pending) state = 'cur';
+        else state = 'locked';
+        var n = makeNode(map, r, state);
+        n.setAttribute('data-id', r.id);
+        if (falling) pendingNode = n;
       });
-      var r = C.region(C.picked), st = C.status(r.id), info = ui.el('div', 'cq-info', null, el), left = ui.el('div', null, null, info);
-      ui.el('h3', null, ui.esc(r.name), left);
-      ui.el('p', null, ui.esc(r.rule), left);
-      ui.el('p', 'rw', (st.taken ? 'Taken: ' : 'Reward: ') + ui.esc(r.rewardText), left);
+      var token = ui.el('div', 'cq-token', null, map);
+      token.appendChild(TT.sprites.icon('boss_' + bossForToken(), 56));
+      placeToken(token, pending || cur);
+      var info = ui.el('div', 'cq-info', null, el), left = ui.el('div', null, null, info);
+      function fillInfo(r) {
+        left.innerHTML = '';
+        ui.el('h3', null, ui.esc(r.name), left);
+        ui.el('p', null, ui.esc(r.rule), left);
+        var foes = ui.el('div', 'cq-foes', '<span>' + ui.esc(r.foeName) + '</span>', left);
+        r.foes.forEach(function (id) { if (TT.defs.heroes[id]) foes.appendChild(TT.sprites.icon('hero_' + id, 30)); });
+        ui.el('p', 'rw', (allDone ? 'Replay. ' : 'Reward: ') + ui.esc(r.rewardText), left);
+      }
+      fillInfo(cur);
       var right = ui.el('div', 'row', null, info);
       right.style.marginTop = '0';
       a.button('Back', '', function () { S.show('title'); }, right);
-      a.button('Choose Boss', 'big primary', function () { S.show('bossSelect'); }, right);
+      var go = a.button('Choose Boss', 'big primary', function () { S.show('bossSelect'); }, right);
+      if (pending) {
+        d.pendingCrush = '';
+        TT.meta.save();
+        crush(map, token, pendingNode, pending, allDone ? null : cur, go, function () {});
+      }
     }
   });
 
@@ -25183,6 +25279,8 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.events.on('screenShow', function (e) {
     var scr = document.querySelector('.scr');
     if (!scr) return;
+    // back from a won reign: straight to the road, to watch the region fall
+    if (e.name === 'title' && TT.meta.data.pendingCrush) { setTimeout(function () { S.show('conquest'); }, 0); return; }
     if (e.name === 'aftermath') {
       var rep = (e.params && e.params.report) || (TT.state && TT.state.lastReport), row = scr.querySelector('.sm-stats');
       if (rep && rep.warChest && row) { var w = ui.el('div', 'tt-note gold', 'War chest: +' + rep.warChest.gold + ' gold, +' + rep.warChest.souls + ' souls', null); row.parentNode.insertBefore(w, row); }
@@ -25194,8 +25292,7 @@ button { font-family: var(--font-body); color: var(--text); }
       var bn = TT.state ? (TT.defs.bosses[TT.state.bossId] || {}).name : '';
       var lines = ['+' + r.bossXp + ' XP for ' + ui.esc(bn || 'your boss')];
       if (r.levelUp) lines.push('Boss level ' + r.levelUp + '!');
-      if (r.foothold) lines.push('Foothold in ' + ui.esc(C.region(r.region).name) + '. New regions open.');
-      if (r.taken) lines.push(ui.esc(C.region(r.region).name) + ' conquered! ' + ui.esc(C.region(r.region).rewardText));
+      if (r.taken) lines.push(ui.esc(C.region(r.region).name) + ' crushed! ' + ui.esc(C.region(r.region).rewardText));
       gain.innerHTML = lines.map(function (l) { return '<div>' + l + '</div>'; }).join('');
       if (h) h.parentNode.insertBefore(gain, h.nextSibling);
       if ((r.taken || r.levelUp) && J) J.confetti();
