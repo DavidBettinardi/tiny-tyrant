@@ -609,6 +609,37 @@ button { font-family: var(--font-body); color: var(--text); }
 })(window);
 
 </script>
+<script>/* src/core/platform.js */
+/*
+ * Tiny Tyrant — src/core/platform.js
+ * The one place the game talks to whatever it is running on. In a browser most of this does nothing. The desktop
+ * app (desktop/preload.js) provides window.ttDesktop, which forwards to Steam when Steam is present.
+ *
+ * TT.platform API: name, isDesktop, unlockAchievement(id), submitScore(bossId, score), quit()
+ */
+(function (TT) {
+  'use strict';
+  function host() { return typeof window !== 'undefined' && window.ttDesktop ? window.ttDesktop : null; }
+  TT.VERSION = '0.9.0';
+  TT.platform = {
+    get isDesktop() { return !!host(); },
+    get name() { return host() ? 'desktop' : 'web'; },
+    unlockAchievement: function (id) {
+      var h = host();
+      if (h && h.unlockAchievement) h.unlockAchievement('ACH_' + String(id).toUpperCase());
+    },
+    submitScore: function (bossId, score) {
+      var h = host();
+      if (h && h.submitScore) h.submitScore(bossId, score);
+    },
+    quit: function () {
+      var h = host();
+      if (h && h.quit) h.quit();
+    }
+  };
+})(window.TT);
+
+</script>
 <script>/* src/core/grid.js */
 /*
  * Tiny Tyrant — tile grid, digging, rooms and the path-must-exist rule.
@@ -11531,7 +11562,8 @@ button { font-family: var(--font-body); color: var(--text); }
       ascension: {},       // bossId -> highest Ascension unlocked (src/systems/ascension.js)
       ascensionPick: {},   // bossId -> Ascension last chosen on the boss-select screen
       tree: {},            // pathId -> tier choices (src/systems/pacts.js)
-      conquest: {}, bossXp: {}, bossTree: {}, stronghold: {}   // src/systems/conquest.js
+      conquest: {}, bossXp: {}, bossTree: {}, stronghold: {},  // src/systems/conquest.js
+      ach: {}, achStats: {}, best: {}                          // src/systems/achievements.js
     };
   }
   M.data = blank();
@@ -14428,6 +14460,7 @@ button { font-family: var(--font-body); color: var(--text); }
     post.data.classId = c.classId; post.data.turned = c.name; post.data.level = c.level; post.data.name = c.name;
     TT.game.spend(state, { gold: 0, souls: C.turnCost(c) }, 'minion');
     release(state, c);
+    TT.events.emit('captiveTurned', { state: state });
     return true;
   };
 
@@ -14463,6 +14496,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var known = state.ext.spy && state.ext.spy.raid === state.raidNum && state.ext.spy.party;
     var party = known || baseGenerate(state) || [];
     state.ext.spy = { raid: state.raidNum, party: party, preview: buildPreview(party) };
+    TT.events.emit('captiveSpied', { state: state });
     return true;
   };
   C.preview = function (state) {
@@ -14472,6 +14506,260 @@ button { font-family: var(--font-body); color: var(--text); }
 
   /* A script ransoms everything; it cannot make use of the others. */
   C.auto = function (state) { while (C.next(state)) C.ransom(state); };
+})(window.TT);
+
+</script>
+<script>/* src/systems/warbands.js */
+/*
+ * Tiny Tyrant — src/systems/warbands.js
+ * Headless-safe. Deterministic: its own dice, so forecasting leaves the raid's dice alone.
+ *
+ * From raid 3, most raids come as a warband with a theme, announced the night before: what they shrug off
+ * and what they fear. A dungeon built around one answer has to adapt or lean on its other traps.
+ * Special raids (10, 20) and elite raids (5, 15) keep their own identity.
+ *
+ * state.ext.warband = {raid, id}. Hero: h.data.band = id.
+ * TT.warbands API: BANDS, current(state) -> band | null
+ */
+(function (TT) {
+  'use strict';
+  var W = TT.warbands = {};
+  var SPECIAL = { 5: 1, 10: 1, 15: 1, 20: 1 };
+
+  W.BANDS = [
+    { id: 'fire_wardens', name: 'The Fire Wardens', strong: ['fire'], weak: ['frost'], resist: { fire: 0.6, frost: -0.4 } },
+    { id: 'frost_band', name: 'The Frost Band', strong: ['frost'], weak: ['fire'], resist: { frost: 0.6, fire: -0.4 } },
+    { id: 'storm_riders', name: 'The Storm Riders', strong: ['lightning'], weak: ['poison'], resist: { lightning: 0.6, poison: -0.4 } },
+    { id: 'plague_masks', name: 'The Plague Masks', strong: ['poison'], weak: ['lightning'], resist: { poison: 0.7, lightning: -0.4 } },
+    { id: 'iron_column', name: 'The Iron Column', strong: ['physical'], weak: ['lightning'], resist: { physical: 0.35, lightning: -0.3 }, armor: 2, speed: 0.85 },
+    { id: 'nightwatch', name: 'The Nightwatch', strong: ['shadow'], weak: ['physical'], resist: { shadow: 0.6, physical: -0.2 }, detect: 0.1 },
+    { id: 'trap_finders', name: 'The Trap Finders', note: 'They spot traps far more easily.', strong: [], weak: ['shadow'], resist: { shadow: -0.3 }, detect: 0.3, hp: 0.85 },
+    { id: 'sprinters', name: 'The Sprinters', note: 'Fast, and light on armor.', strong: [], weak: ['physical'], resist: { physical: -0.2 }, speed: 1.2, hp: 0.85 }
+  ];
+  var BY = {};
+  W.BANDS.forEach(function (b) { BY[b.id] = b; });
+
+  function pick(state) {
+    var s = ((state.seed | 0) ^ Math.imul(state.raidNum + 131 | 0, 2654435761)) >>> 0;
+    s = (s + 0x6D2B79F5) >>> 0;
+    var t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = ((t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t) >>> 0;
+    // one raid in four comes as an ordinary mixed party
+    if ((t ^ (t >>> 14)) % 4 === 0) return null;
+    return W.BANDS[(t >>> 8) % W.BANDS.length];
+  }
+  W.current = function (state) {
+    if (!state || state.raidNum < 3 || SPECIAL[state.raidNum]) return null;
+    var e = state.ext && state.ext.warband;
+    if (!e || e.raid !== state.raidNum) {
+      var b = pick(state);
+      e = { raid: state.raidNum, id: b ? b.id : null };
+      state.ext = state.ext || {};
+      state.ext.warband = e;
+    }
+    return e.id ? BY[e.id] : null;
+  };
+
+  TT.addFilter('party', function (party, ctx) {
+    var b = W.current(ctx && ctx.state);
+    if (!b) return party;
+    party.forEach(function (s) {
+      s.resist = s.resist || {};
+      Object.keys(b.resist).forEach(function (k) { s.resist[k] = (s.resist[k] || 0) + b.resist[k]; });
+      s.data = s.data || {};
+      s.data.band = b.id;
+    });
+    return party;
+  }, 92);
+  TT.addFilter('heroStats', function (h) {
+    var b = BY[h.data.band];
+    if (!b) return h;
+    if (b.hp) { h.maxHp = Math.round(h.maxHp * b.hp); h.hp = h.maxHp; }
+    if (b.armor) h.armor = (h.armor || 0) + b.armor;
+    if (b.speed) h.data.speedMul = (h.data.speedMul || 1) * b.speed;
+    if (b.detect) h.detect = (h.detect || 0) + b.detect;
+    return h;
+  }, 37);
+})(window.TT);
+
+</script>
+<script>/* src/systems/achievements.js */
+/*
+ * Tiny Tyrant — src/systems/achievements.js
+ * Headless-safe. Achievements, lifetime stats and the reign score. Stats and unlocks live in TT.meta.data;
+ * unlocks and best scores are passed to TT.platform, which forwards them to Steam or anything else.
+ *
+ * LIST entries: {id, name, desc, tier: 1|2|3, stat, goal, hidden}. id is also the Steam API name (ACH_<ID>).
+ * Events: 'achievement' {def}, 'scorePop' {points, why}.
+ * TT.achievements API: LIST, has(id), progress(def) -> 0..1, unlocked() -> n, score(state), best(bossId)
+ */
+(function (TT) {
+  'use strict';
+  var M = TT.meta, A = TT.achievements = {};
+
+  A.LIST = [
+    { id: 'first_blood', name: 'First Blood', desc: 'Kill your first hero.', tier: 1, stat: 'kills', goal: 1 },
+    { id: 'butcher', name: 'Butcher', desc: 'Kill 250 heroes.', tier: 2, stat: 'kills', goal: 250 },
+    { id: 'death_itself', name: 'Death Itself', desc: 'Kill 2,000 heroes.', tier: 3, stat: 'kills', goal: 2000 },
+    { id: 'finders_keepers', name: 'Finders Keepers', desc: 'Recover gold from a dead thief.', tier: 1, stat: 'recovered', goal: 1 },
+    { id: 'repo_man', name: 'Repossessed', desc: 'Recover 5,000 gold.', tier: 2, stat: 'recovered', goal: 5000 },
+    { id: 'big_save', name: 'Not Today', desc: 'Recover 500 gold in one raid.', tier: 2 },
+    { id: 'last_coin', name: 'The Last Coin', desc: 'Survive a raid with under 50 gold in the hoard.', tier: 2 },
+    { id: 'untouched', name: 'Untouched', desc: 'Win a reign without losing a single coin.', tier: 3 },
+    { id: 'pyromaniac', name: 'Pyromaniac', desc: 'Set off an Inferno.', tier: 1 },
+    { id: 'kaboom', name: 'Kaboom', desc: 'Set off 10 Explosions in one raid.', tier: 2 },
+    { id: 'conductor', name: 'Conductor', desc: 'Set off a Shock Pool.', tier: 1 },
+    { id: 'ice_breaker', name: 'Ice Breaker', desc: 'Shatter a frozen hero.', tier: 1 },
+    { id: 'alchemist', name: 'Mad Alchemist', desc: 'Use 5 kinds of combo in one raid.', tier: 2 },
+    { id: 'chain_gang', name: 'Chain Gang', desc: 'Chain 10 combos in a row.', tier: 2 },
+    { id: 'combo_book', name: 'The Whole Book', desc: 'Use every kind of combo.', tier: 3 },
+    { id: 'style', name: 'With Style', desc: 'Earn an S grade.', tier: 1 },
+    { id: 'style_streak', name: 'Connoisseur', desc: 'Earn 3 S grades in a row.', tier: 2 },
+    { id: 'style_master', name: 'Master of the Dark Arts', desc: 'Earn 25 S grades.', tier: 3, stat: 'sGrades', goal: 25 },
+    { id: 'no_escape', name: 'No Way Out', desc: 'Let nobody escape for 5 raids in a row.', tier: 2 },
+    { id: 'grudge', name: 'Grudge Settled', desc: 'Kill a nemesis.', tier: 1 },
+    { id: 'old_enemy', name: 'Old Enemy', desc: 'Kill a nemesis of rank 3 or higher.', tier: 2 },
+    { id: 'evolved', name: 'Evolved', desc: 'Evolve your boss.', tier: 1 },
+    { id: 'tyrant', name: 'Tiny Tyrant', desc: 'Reach your boss\'s final form.', tier: 2 },
+    { id: 'veteran', name: 'Old Soldier', desc: 'Raise a minion to rank 3.', tier: 2 },
+    { id: 'turncoat', name: 'Join Us', desc: 'Turn a captive.', tier: 1 },
+    { id: 'spymaster', name: 'Spymaster', desc: 'Send a spy.', tier: 1 },
+    { id: 'long_road', name: 'The Long Way Round', desc: 'Make the heroes\' route 120 tiles long.', tier: 2 },
+    { id: 'halfway', name: 'Halfway There', desc: 'Survive 10 raids.', tier: 1 },
+    { id: 'reign', name: 'The Reign Endures', desc: 'Survive all 20 raids.', tier: 2 },
+    { id: 'first_land', name: 'Landlord', desc: 'Conquer a region.', tier: 2 },
+    { id: 'world', name: 'World Tyrant', desc: 'Conquer every region.', tier: 3 },
+    { id: 'all_bosses', name: 'Rogues\' Gallery', desc: 'Win a reign with every boss.', tier: 3 },
+    { id: 'boss_level', name: 'Well Practised', desc: 'Raise a boss to level 5.', tier: 2 },
+    { id: 'high_score', name: 'Six Figures', desc: 'Score 100,000 in one reign.', tier: 3 }
+  ];
+  var BY = {};
+  A.LIST.forEach(function (d) { BY[d.id] = d; });
+
+  function done() { var d = M.data; if (!d.ach || typeof d.ach !== 'object') d.ach = {}; return d.ach; }
+  function stats() { var d = M.data; if (!d.achStats || typeof d.achStats !== 'object') d.achStats = {}; return d.achStats; }
+  A.has = function (id) { return !!done()[id]; };
+  A.unlocked = function () { return Object.keys(done()).length; };
+  A.progress = function (def) {
+    if (A.has(def.id)) return 1;
+    if (!def.stat) return 0;
+    return Math.min(1, (stats()[def.stat] || 0) / def.goal);
+  };
+  function grant(id) {
+    if (!BY[id] || A.has(id)) return;
+    done()[id] = true;
+    M.save();
+    if (TT.platform) TT.platform.unlockAchievement(id);
+    TT.events.emit('achievement', { def: BY[id] });
+  }
+  function bump(stat, n) {
+    var s = stats();
+    s[stat] = (s[stat] || 0) + n;
+    A.LIST.forEach(function (d) { if (d.stat === stat && s[stat] >= d.goal) grant(d.id); });
+  }
+
+  /* ------------------------------------------------------------------ score */
+  function run(state) {
+    state.ext = state.ext || {};
+    return state.ext.score || (state.ext.score = { total: 0, chain: 0, chainAt: -99, sStreak: 0, cleanStreak: 0, recovered: 0, combos: {} });
+  }
+  A.score = function (state) { return state && state.ext && state.ext.score ? state.ext.score.total : 0; };
+  A.best = function (bossId) { var b = M.data.best; return b && b[bossId] ? b[bossId] : 0; };
+  function add(state, points, why) {
+    var r = run(state);
+    r.total += Math.round(points);
+    if (why) TT.events.emit('scorePop', { points: Math.round(points), why: why, state: state });
+  }
+
+  /* ------------------------------------------------------------------ what happens in a raid */
+  TT.events.on('heroDeath', function (e) {
+    var st = e.state || TT.state;
+    if (!st) return;
+    bump('kills', 1);
+    add(st, 50 * (e.hero && e.hero.level || 1));
+  });
+  TT.events.on('treasureRecovered', function (e) {
+    var st = e.state || TT.state;
+    if (!st || !(e.amount > 0)) return;
+    var rep = st.raid && st.raid.report;
+    bump('recovered', e.amount);
+    add(st, e.amount * 2);
+    if (rep && rep.lootRecovered >= 500) grant('big_save');
+  });
+  TT.events.on('reaction', function (e) {
+    var st = e.state;
+    if (!st || !st.raid || !e.power) return;
+    var r = run(st), t = st.raid.t, rep = st.raid.report;
+    r.chain = t - r.chainAt <= 4 ? r.chain + 1 : 1;
+    r.chainAt = t;
+    add(st, 40 * e.power * Math.min(5, r.chain));
+    if (r.chain >= 2) TT.events.emit('comboChain', { chain: r.chain, state: st });
+    if (r.chain >= 10) grant('chain_gang');
+    if (e.name === 'Inferno') grant('pyromaniac');
+    if (e.name === 'Shock Pool') grant('conductor');
+    if (e.name === 'Shatter') grant('ice_breaker');
+    var seen = stats().comboKinds || (stats().comboKinds = {});
+    seen[e.name] = 1;
+    var names = {};
+    TT.elements.REACTIONS.forEach(function (x) { names[x.name] = 1; });
+    if (Object.keys(names).every(function (n) { return seen[n]; })) grant('combo_book');
+    var counts = rep.reactions || {};
+    if (counts.Explosion >= 10) grant('kaboom');
+    if (Object.keys(counts).length >= 5) grant('alchemist');
+  });
+  TT.events.on('nemesisSlain', function (e) {
+    if (e.state) add(e.state, 1000 * e.rec.rank, 'Nemesis slain');
+    grant('grudge');
+    if (e.rec.rank >= 3) grant('old_enemy');
+  });
+  TT.events.on('bossEvolved', function (e) { grant('evolved'); if (e.stage >= 3) grant('tyrant'); });
+  TT.events.on('minionRanked', function (e) { if (e.rank >= 3) grant('veteran'); });
+  TT.events.on('captiveTurned', function () { grant('turncoat'); });
+  TT.events.on('captiveSpied', function () { grant('spymaster'); });
+
+  var GRADE_SCORE = { S: 1500, A: 700, B: 200, C: 0 };
+  TT.events.on('raidEnd', function (e) {
+    var st = e.state, rep = e.report;
+    if (!st || !rep) return;
+    var r = run(st);
+    r.recovered += rep.lootRecovered || 0;
+    r.sStreak = rep.grade === 'S' ? r.sStreak + 1 : 0;
+    r.cleanStreak = rep.escapes.length ? 0 : r.cleanStreak + 1;
+    if (rep.lootStolen) r.lost = true;
+    add(st, (GRADE_SCORE[rep.grade] || 0) * (1 + st.raidNum / 10));
+    rep.score = r.total;
+    if (rep.grade === 'S') { grant('style'); bump('sGrades', 1); }
+    if (r.sStreak >= 3) grant('style_streak');
+    if (r.cleanStreak >= 5) grant('no_escape');
+    if (st.hoard > 0 && st.hoard < 50) grant('last_coin');
+    if (st.raidNum >= 10) grant('halfway');
+    if (TT.pressure.routeRuns(st).length >= 120) grant('long_road');
+  });
+  TT.events.on('runEnd', function (e) {
+    var st = e.state;
+    if (!st) return;
+    var r = run(st), d = M.data;
+    d.best = d.best && typeof d.best === 'object' ? d.best : {};
+    if (e.outcome === 'victory') {
+      add(st, 5000 + st.hoard * 3);
+      grant('reign');
+      if (!r.lost) grant('untouched');
+      var wins = d.bossWins || {};
+      if (TT.list('bosses').every(function (b) { return wins[b.id] > 0; })) grant('all_bosses');
+    }
+    r.isBest = r.total > (d.best[st.bossId] || 0);
+    if (r.isBest) d.best[st.bossId] = r.total;
+    if (r.total >= 100000) grant('high_score');
+    if (TT.conquest) {
+      if (TT.conquest.taken().length) grant('first_land');
+      if (TT.conquest.taken().length >= TT.conquest.REGIONS.length) grant('world');
+      if (TT.conquest.bossLevel(st.bossId) >= 5) grant('boss_level');
+    }
+    if (TT.platform) TT.platform.submitScore(st.bossId, r.total);
+    M.save();
+  });
+  TT.addFilter('newRun', function (state) { run(state); return state; }, 8);
+  TT.events.on('runLoaded', function (e) { if (e && e.state) run(e.state); });
 })(window.TT);
 
 </script>
@@ -24860,6 +25148,199 @@ button { font-family: var(--font-body); color: var(--text); }
     var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
     setInterval(sync, 250);
     setInterval(syncSpy, 300);
+  });
+})(window.TT);
+
+</script>
+<script>/* src/ui/rewards.js */
+/*
+ * Tiny Tyrant — src/ui/rewards.js
+ * The feel of winning: gold-recovered splashes, combo chains, the achievement unlock card, the live score, the
+ * warband forecast, the Achievements screen, and the score line after a raid and a reign.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  var ui = TT.ui, S = ui.screens, A = TT.achievements, J = TT.juice;
+  var splashBox = null, cardBox = null, scoreEl = null, bandEl = null, shownScore = 0, cards = [], cardOn = false, bandKey = '';
+  var TIER = { 1: 'bronze', 2: 'silver', 3: 'gold' };
+
+  var CSS = [
+    '#tt-splash{position:fixed;left:0;right:0;top:19%;z-index:31;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}',
+    '.tt-spl{font-family:var(--font-display);text-transform:uppercase;letter-spacing:.08em;text-align:center;padding:4px 18px;border-radius:4px;background:rgba(8,5,10,.72);animation:ttspl 2s cubic-bezier(.2,1.4,.4,1) forwards}',
+    '.tt-spl small{display:block;font-family:var(--font-body);font-size:13px;letter-spacing:.04em;text-transform:none;color:var(--text-dim)}',
+    '.tt-spl.gold{font-size:clamp(20px,3.4vw,34px);color:#ffd24a;text-shadow:0 0 22px #ff9a20,0 2px 0 #000}',
+    '.tt-spl.chain{font-size:clamp(18px,3vw,30px);color:#ff8a4a;text-shadow:0 0 18px #ff4a10,0 2px 0 #000}',
+    '.tt-spl.big{font-size:clamp(22px,3.8vw,38px);color:#e8d0ff;text-shadow:0 0 22px #a060ff,0 2px 0 #000}',
+    '@keyframes ttspl{0%{opacity:0;transform:scale(1.9)}12%{opacity:1;transform:scale(1)}78%{opacity:1}100%{opacity:0;transform:translateY(-14px)}}',
+    '#tt-ach{position:fixed;right:16px;top:64px;z-index:46;pointer-events:none}',
+    '.tt-ach-card{display:flex;align-items:center;gap:12px;width:min(340px,80vw);padding:12px 14px;background:linear-gradient(100deg,#2a1d10,#150e18);border:2px solid #b08a40;border-radius:6px;box-shadow:0 0 28px rgba(255,180,70,.5);animation:ttach 4.2s cubic-bezier(.2,1.2,.4,1) forwards}',
+    '.tt-ach-card .t{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#ffcf7a}',
+    '.tt-ach-card .n{font-family:var(--font-display);font-size:18px;color:#fff0d0}',
+    '.tt-ach-card .d{font-size:12.5px;color:var(--text-dim)}',
+    '@keyframes ttach{0%{opacity:0;transform:translateX(70px) scale(.9)}8%{opacity:1;transform:none}90%{opacity:1}100%{opacity:0;transform:translateX(40px)}}',
+    '.tt-medal{flex:none;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;color:#2a1a08;box-shadow:inset 0 -3px 6px rgba(0,0,0,.4),0 0 14px rgba(255,200,100,.5)}',
+    '.tt-medal.bronze{background:radial-gradient(circle at 35% 30%,#f0c090,#a0642c)}',
+    '.tt-medal.silver{background:radial-gradient(circle at 35% 30%,#fff,#9aa4b0)}',
+    '.tt-medal.gold{background:radial-gradient(circle at 35% 30%,#fff3b0,#e0a020)}',
+    '.tt-medal.off{background:#2a2430;color:#5a4e60;box-shadow:none}',
+    '#tt-score{margin-top:1px;font-size:13px;letter-spacing:.08em;color:#ffcf7a}',
+    '#tt-band{position:absolute;left:50%;top:68px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:6px;padding:4px 12px;font-size:14px;color:var(--text);white-space:nowrap;background:var(--panel);border:1px solid #c08050;border-radius:4px}',
+    '#tt-band .l{color:var(--text-faint);font-size:12px;margin-left:6px}',
+    '.ac-scr{width:min(820px,calc(100vw - 24px))}',
+    '.ac-count{text-align:center;font-size:15px;color:#ffcf7a;margin-bottom:12px}',
+    '.ac-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;max-height:62vh;overflow:auto;text-align:left}',
+    '.ac-one{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--panel);border:1px solid var(--edge);border-radius:4px}',
+    '.ac-one.off{opacity:.62}',
+    '.ac-one b{display:block;font-weight:normal;font-size:14.5px;color:var(--text)}',
+    '.ac-one span{font-size:12px;color:var(--text-dim)}',
+    '.ac-one .bar{height:4px;margin-top:4px;background:#241820;border-radius:2px;overflow:hidden}',
+    '.ac-one .bar i{display:block;height:100%;background:#ffcf7a}',
+    '.go-score{text-align:center;font-family:var(--font-display);font-size:30px;color:#ffe2a8;margin:6px 0}',
+    '.go-score small{display:block;font-family:var(--font-body);font-size:13px;color:#ffd24a}',
+    '.tt-ver{position:fixed;right:10px;bottom:6px;font-size:11px;color:var(--text-faint)}'
+  ].join('');
+
+  /* ------------------------------------------------------------------ splashes */
+  function splash(text, kind, sub) {
+    if (!splashBox) return;
+    while (splashBox.children.length >= 3) splashBox.firstChild.remove();
+    var el = document.createElement('div');
+    el.className = 'tt-spl ' + (kind || 'gold');
+    el.innerHTML = ui.esc(text) + (sub ? '<small>' + ui.esc(sub) + '</small>' : '');
+    splashBox.appendChild(el);
+    setTimeout(function () { el.remove(); }, 2000);
+  }
+  ui.splash = splash;
+
+  /* Gold saved adds up over a moment, so three thieves make one number. */
+  var savedAmt = 0, savedT = 0;
+  TT.events.on('treasureRecovered', function (e) {
+    if (e.state && e.state !== TT.state) return;
+    savedAmt += e.amount;
+    clearTimeout(savedT);
+    savedT = setTimeout(function () {
+      if (savedAmt >= 10) splash(savedAmt + ' gold recovered!', 'gold');
+      if (TT.audio && savedAmt >= 10) TT.audio.play('trapBell', {});
+      savedAmt = 0;
+    }, 500);
+    if (J && e.hero) J.coins(e.hero.x, e.hero.y, 'gold', Math.min(8, Math.ceil(e.amount / 40)));
+  });
+  var CHAIN_WORD = ['', '', 'Combo', 'Combo', 'Chain', 'Chain', 'Mayhem', 'Mayhem', 'Havoc', 'Havoc', 'Cataclysm'];
+  TT.events.on('comboChain', function (e) {
+    if (e.state !== TT.state || e.chain < 3) return;
+    splash(CHAIN_WORD[Math.min(e.chain, 10)] + ' x' + e.chain, 'chain');
+  });
+  TT.events.on('scorePop', function (e) { if (e.state === TT.state && e.why) splash(e.why, 'big', '+' + e.points.toLocaleString() + ' score'); });
+  TT.events.on('raidEnd', function (e) {
+    var rep = e.report;
+    if (!rep || e.state !== TT.state) return;
+    setTimeout(function () {
+      if (rep.lootTaken > 0 && rep.lootStolen === 0) splash('Every coin came back', 'gold');
+    }, 300);
+  });
+
+  /* ------------------------------------------------------------------ achievement cards */
+  function nextCard() {
+    if (cardOn || !cards.length || !cardBox) return;
+    cardOn = true;
+    var d = cards.shift(), c = document.createElement('div');
+    c.className = 'tt-ach-card';
+    c.innerHTML = '<div class="tt-medal ' + TIER[d.tier] + '">&#9733;</div><div><div class="t">Achievement</div><div class="n">' + ui.esc(d.name) + '</div><div class="d">' + ui.esc(d.desc) + '</div></div>';
+    cardBox.appendChild(c);
+    if (J && d.tier >= 2) { J.flash('rgba(255,200,90,.8)', 0.4); J.confetti(); }
+    if (TT.audio) TT.audio.play('trapHoly', {});
+    setTimeout(function () { c.remove(); cardOn = false; nextCard(); }, 4200);
+  }
+  TT.events.on('achievement', function (e) { cards.push(e.def); nextCard(); });
+
+  /* ------------------------------------------------------------------ HUD */
+  function sync() {
+    var st = TT.state, on = st && ui.hud.visible;
+    if (scoreEl) {
+      var target = on ? A.score(st) : 0;
+      shownScore += Math.ceil((target - shownScore) * 0.3);
+      if (target < shownScore) shownScore = target;
+      scoreEl.textContent = on && target ? shownScore.toLocaleString() : '';
+    }
+    if (!bandEl) return;
+    var b = on && st.phase === 'build' ? TT.warbands.current(st) : null, k = b ? b.id : '';
+    bandEl.classList.toggle('hidden', !b);
+    if (k === bandKey) return;
+    bandKey = k;
+    bandEl.innerHTML = '';
+    if (!b) return;
+    ui.el('span', null, ui.esc(b.name), bandEl);
+    if (b.strong.length) {
+      ui.el('span', 'l', 'Resist', bandEl);
+      b.strong.forEach(function (t) { bandEl.appendChild(TT.icons.el(TT.elements.elementOfType(t), 18)); });
+    }
+    if (b.note) ui.el('span', 'l', ui.esc(b.note), bandEl);
+    ui.el('span', 'l', 'Weak', bandEl);
+    b.weak.forEach(function (t) { bandEl.appendChild(TT.icons.el(TT.elements.elementOfType(t), 18)); });
+  }
+
+  /* ------------------------------------------------------------------ the screen */
+  S.register('achievements', {
+    render: function (el, p, a) {
+      el.classList.add('ac-scr');
+      ui.el('h2', null, 'Achievements', el);
+      ui.el('div', 'ac-count', A.unlocked() + ' / ' + A.LIST.length, el);
+      var grid = ui.el('div', 'ac-grid', null, el);
+      A.LIST.slice().sort(function (x, y) { return (A.has(y.id) ? 1 : 0) - (A.has(x.id) ? 1 : 0) || A.progress(y) - A.progress(x) || x.tier - y.tier; }).forEach(function (d) {
+        var on = A.has(d.id), f = A.progress(d);
+        var row = ui.el('div', 'ac-one' + (on ? '' : ' off'), null, grid);
+        ui.el('div', 'tt-medal ' + (on ? TIER[d.tier] : 'off'), '&#9733;', row);
+        var t = ui.el('div', null, null, row);
+        t.style.flex = '1';
+        ui.el('b', null, ui.esc(d.name), t);
+        ui.el('span', null, ui.esc(d.desc), t);
+        if (!on && f > 0) ui.el('i', null, null, ui.el('div', 'bar', null, t)).style.width = Math.round(f * 100) + '%';
+      });
+      a.button('Back', '', function () { S.show('title'); }, ui.el('div', 'row', null, el));
+    }
+  });
+  TT.events.on('screenShow', function (e) {
+    var scr = document.querySelector('.scr');
+    if (!scr) return;
+    if (e.name === 'title') {
+      var menu = scr.querySelector('.menu');
+      if (menu) {
+        var b = document.createElement('button');
+        b.className = 'tt-btn big';
+        b.textContent = 'Achievements (' + A.unlocked() + ')';
+        b.addEventListener('click', function () { ui.click(); S.show('achievements'); });
+        var last = menu.lastChild;
+        menu.insertBefore(b, last);
+        if (TT.platform.isDesktop) {
+          var q = document.createElement('button');
+          q.className = 'tt-btn big';
+          q.textContent = 'Quit';
+          q.addEventListener('click', function () { TT.platform.quit(); });
+          menu.appendChild(q);
+        }
+      }
+      ui.el('div', 'tt-ver', 'v' + TT.VERSION, scr);
+    }
+    if (e.name === 'gameOver') {
+      var st = TT.state, h = scr.querySelector('h1,h2');
+      if (st && h) {
+        var r = st.ext && st.ext.score, g = document.createElement('div');
+        g.className = 'go-score';
+        g.innerHTML = A.score(st).toLocaleString() + (r && r.isBest ? '<small>New best!</small>' : '<small style="color:var(--text-faint)">Best ' + A.best(st.bossId).toLocaleString() + '</small>');
+        h.parentNode.insertBefore(g, h.nextSibling);
+      }
+    }
+  });
+
+  TT.events.on('uiReady', function () {
+    var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
+    splashBox = document.createElement('div'); splashBox.id = 'tt-splash'; document.body.appendChild(splashBox);
+    cardBox = document.createElement('div'); cardBox.id = 'tt-ach'; document.body.appendChild(cardBox);
+    var center = document.querySelector('#hud-top .hud-center');
+    if (center) { scoreEl = document.createElement('div'); scoreEl.id = 'tt-score'; center.appendChild(scoreEl); }
+    bandEl = ui.el('div', 'hidden', null, document.getElementById('ui')); bandEl.id = 'tt-band';
+    setInterval(sync, 120);
   });
 })(window.TT);
 
