@@ -375,8 +375,8 @@ button { font-family: var(--font-body); color: var(--text); }
     witnessRadius: 4,        // heroes within this many tiles learn a triggered trap
     knownTrapAvoid: 30,      // extra path cost for a known trap tile
     captureChanceInLair: 0.35,
-    ambientBuild: 0.72,       // light floor in build phase (render only)
-    ambientRaid: 0.34
+    ambientBuild: 0.96,       // light floor in build phase (render only)
+    ambientRaid: 0.84
   };
 
   /* ------------------------------------------------------------------ errors */
@@ -1270,6 +1270,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (e.status.web || e.status.stun) m = 0;
     if (e.data.speedMul) m *= e.data.speedMul;
     if (e.data.chargeMul) m *= e.data.chargeMul;
+    if (e.carried > 0 && TT.pressure) m *= TT.pressure.carrySpeed;
     return m;
   };
   C.canAct = function (e) { return TT.isActive(e) && !e.status.stun; };
@@ -5364,6 +5365,7 @@ button { font-family: var(--font-body); color: var(--text); }
           var f = K.hpFrac(a);
           if (a.status.poison || a.status.burn) f -= 0.15;
           if (a.status.fear) f -= 0.1;
+          if (a === h && h.carried > 0) return;
           if (f < bestScore && (a === h || K.los(ctx, h, a))) { bestScore = f; best = a; }
         });
         if (best) {
@@ -11237,7 +11239,7 @@ button { font-family: var(--font-body); color: var(--text); }
   };
   /* Dread: a ramp in hero toughness as word of the barrow spreads. Heroes no longer retreat when hurt,
      so they die more often and pay out more; the ramp is high to make up for it. */
-  var DREAD_BASE = 1.2, DREAD_STEP = 0.2, DREAD_MAX = 5;
+  var DREAD_BASE = 1.2, DREAD_STEP = 0.25, DREAD_MAX = 6;
   SEASON.dread = function (state) {
     var r = Math.max(1, state.raidNum || 1);
     return Math.min(DREAD_MAX, DREAD_BASE + DREAD_STEP * (r - 1));
@@ -13177,6 +13179,25 @@ button { font-family: var(--font-body); color: var(--text); }
   P.turns = function (state) { return routeList(state).filter(function (t) { return t.turned; }).length; };
   P.windingGold = function (state) { return Math.min(GOLD_TURN_CAP, P.turns(state) * GOLD_PER_TURN); };
   P.CHARGE_FROM = CHARGE_FROM;
+
+  /* Souls are scarce: a raid only yields so many, however big the party was. */
+  P.soulLimit = function (state) { return 4 + Math.floor((state.raidNum || 1) / 4); };
+  TT.addFilter('heroLoot', function (loot, ctx) {
+    var raid = ctx.state && ctx.state.raid;
+    if (!raid || !(loot.souls > 0)) return loot;
+    raid.soulsPaid = raid.soulsPaid || 0;
+    var room = Math.max(0, P.soulLimit(ctx.state) - raid.soulsPaid), got = Math.min(room, loot.souls);
+    raid.soulsPaid += got;
+    loot.souls = got;
+    return loot;
+  }, 99);
+
+  /* A sack of gold is heavy, and it does not leave room for much else: carriers are slower and hard to heal. */
+  var CARRY_SPEED = 0.9, CARRY_HEAL = 0.5;
+  TT.addFilter('heal', function (amt, c) {
+    return c.target && c.target.kind === 'hero' && c.target.carried > 0 ? amt * CARRY_HEAL : amt;
+  }, 30);
+  P.carrySpeed = CARRY_SPEED;
 
   /* The barrow can only keep so many mechanisms wound, so where each one goes matters. */
   P.trapLimit = function (state) { return 12 + 2 * (state.raidNum || 1) + (TT.glory && TT.glory.relic(state, 'overcharge') ? 4 : 0); };
@@ -16529,7 +16550,7 @@ button { font-family: var(--font-body); color: var(--text); }
       c.stroke();
       if (!exposed) return;
     } else {
-      c.fillStyle = exposed ? '#1d1822' : '#0d0b10';
+      c.fillStyle = exposed ? '#2c2632' : '#17141b';
       c.fillRect(px, py, T, T);
       for (var i = 0; i < (exposed ? 7 : 4); i++) {
         c.fillStyle = exposed ? 'rgba(70,60,80,' + (0.12 + h2(x, y, 20 + i) * 0.18) + ')' : 'rgba(40,34,46,0.35)';
@@ -16571,8 +16592,8 @@ button { font-family: var(--font-body); color: var(--text); }
     c.clearRect(0, 0, tileCanvas.width, tileCanvas.height);
     for (var y = 0; y < g.h; y++) for (var x = 0; x < g.w; x++) {
       var t = g.tiles[y * g.w + x];
-      if (t === TL.FLOOR) drawFloorTile(c, g, x, y, '#211c25', false);
-      else if (t === TL.LAIR) drawFloorTile(c, g, x, y, '#21172a', true);
+      if (t === TL.FLOOR) drawFloorTile(c, g, x, y, '#3a3240', false);
+      else if (t === TL.LAIR) drawFloorTile(c, g, x, y, '#3a2848', true);
       else if (t === TL.ENTRANCE) {
         drawFloorTile(c, g, x, y, '#242a33', false);
         var grd = c.createLinearGradient(x * T, 0, x * T + T, 0);
@@ -16981,7 +17002,7 @@ button { font-family: var(--font-body); color: var(--text); }
       // vignette
       var vw = canvas.width, vh = canvas.height;
       var vg = ctx.createRadialGradient(vw / 2, vh / 2, Math.min(vw, vh) * 0.35, vw / 2, vh / 2, Math.max(vw, vh) * 0.75);
-      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.25)');
       ctx.fillStyle = vg; ctx.fillRect(0, 0, vw, vh);
     }
   };
