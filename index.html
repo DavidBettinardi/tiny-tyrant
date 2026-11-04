@@ -4077,7 +4077,7 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.registerTrap({
     id: 'mirror_hall', name: 'Hall of Mirrors',
     desc: 'Polished silver, slightly warped, set into the wall at the height of a frightened face. What looks back is wearing your armour and holding a knife. So, it seems, is the person next to you.',
-    cost: { gold: 110, souls: 1 }, damageType: 'shadow', placement: 'wall', trigger: 'proximity',
+    cost: { gold: 135, souls: 1 }, damageType: 'shadow', placement: 'wall', trigger: 'proximity',
     radius: 3.5, cooldown: 14, noDamage: true,
     detectMul: 1.4, disarmMul: 0.7, disarmTime: 2.5,
     light: { r: 1.4, color: '#d8a0ff', i: 0.25 },
@@ -12259,7 +12259,7 @@ button { font-family: var(--font-body); color: var(--text); }
     return s;
   }
   function gradeOf(rep) {
-    if (rep.escapes.length) return rep.lootStolen > 0 && rep.lootStolen >= rep.hoardAfter * 0.2 ? 'C' : 'B';
+    if (rep.escapes.length) return rep.lootStolen > 0 && rep.lootStolen >= (rep.hoardAfter + rep.lootStolen) * 0.25 ? 'C' : 'B';
     return rep.style.perfect && rep.bossAlive !== false ? 'S' : 'A';
   }
   TT.events.on('raidEnd', function (e) {
@@ -13563,7 +13563,7 @@ button { font-family: var(--font-body); color: var(--text); }
     resist: { shadow: 0.3, holy: -0.2 }, immune: {},
     unlocked: false, unlockCost: 220, unlockText: 'Conquer the Gilded Coast, or pay infamy.',
     flavor: 'Spends gold to fight. His hoard grows every night.',
-    passive: { name: 'Compound Interest', desc: 'The hoard earns 3% every night. His spells cost gold.' },
+    passive: { name: 'Compound Interest', desc: 'The hoard earns 5% every night. His spells cost gold.' },
     harryText: 'The Baron adjusts one cuff and turns toward the noise.',
     woundedText: 'The Baron retreats behind his gold.',
     think: function (b, ctx) { B.lairBrain(b, ctx, {}); },
@@ -13624,7 +13624,7 @@ button { font-family: var(--font-body); color: var(--text); }
   });
   TT.addFilter('buildIncome', function (inc, ctx) {
     var st = ctx && ctx.state;
-    if (isBoss(st, 'gilded_baron')) st.hoard = Math.round(st.hoard * 1.03);
+    if (isBoss(st, 'gilded_baron')) st.hoard = Math.round(st.hoard * 1.05);
     return inc;
   }, 60);
   sig({
@@ -13749,7 +13749,7 @@ button { font-family: var(--font-body); color: var(--text); }
   sig({
     id: 'eel_nest', boss: 'drowned_queen', signature: 2, name: 'Eel Nest', blurb: 'Lightning eels. Double damage to anyone soaked.',
     desc: 'They have been waiting for someone wet.',
-    cost: { gold: 80, souls: 0 }, damageType: 'lightning', trigger: 'proximity', radius: 2, dmg: 12, cooldown: 4,
+    cost: { gold: 100, souls: 0 }, damageType: 'lightning', trigger: 'proximity', radius: 2, dmg: 12, cooldown: 4,
     onTrigger: function (ctx) {
       burst(ctx, ctx.def.radius).forEach(function (h) {
         ctx.damage(h, ctx.def.dmg * (h.data.soakedUntil > ctx.raid.t ? 2 : 1));
@@ -13856,7 +13856,7 @@ button { font-family: var(--font-body); color: var(--text); }
   sig({
     id: 'steam_valve', boss: 'clockwork_warden', signature: 2, name: 'Steam Valve', blurb: 'Fills the area with blinding steam.',
     desc: 'Rated for far more pressure than this.',
-    cost: { gold: 70, souls: 0 }, damageType: 'fire', trigger: 'proximity', radius: 1.5, dmg: 14, cooldown: 7,
+    cost: { gold: 55, souls: 0 }, damageType: 'fire', trigger: 'proximity', radius: 1.5, dmg: 14, cooldown: 7,
     onTrigger: function (ctx) {
       burst(ctx, 1.5).forEach(function (h) { ctx.damage(h, ctx.def.dmg); });
       for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) E.lay(ctx.state, ctx.x + dx, ctx.y + dy, 'steam', 6, null);
@@ -14130,14 +14130,14 @@ button { font-family: var(--font-body); color: var(--text); }
     { id: 'barrow_downs', name: 'Barrow Downs', x: 8, y: 46, tier: 0, foeName: 'Local adventurers', foes: ['knight', 'rogue', 'ranger', 'burglar'], rule: 'No special rules.', reward: { startGold: 80 }, rewardText: '+80 starting gold' },
     { id: 'black_fen', name: 'Black Fen', x: 15, y: 30, tier: 1, foeName: 'Fen hunters', foes: ['ranger', 'beastmaster', 'plague_doctor', 'pathfinder'], rule: 'Heroes 5% slower. Lightning +25%.', reward: { boss: 'drowned_queen' }, rewardText: 'The Drowned Queen' },
     { id: 'iron_deep', name: 'Iron Deep', x: 25, y: 64, tier: 1, foeName: 'Miners and machinists', foes: ['dwarf', 'delver', 'artificer', 'ogre'], rule: 'Digging is half price. Parties +1.', reward: { boss: 'clockwork_warden' }, rewardText: 'The Clockwork Warden' },
-    { id: 'saints_march', name: 'Saint\'s March', x: 35, y: 34, tier: 2, foeName: 'The faithful', foes: ['cleric', 'paladin', 'templar', 'monk'], rule: 'Heroes have 8% more health.', reward: { hoard: 200 }, rewardText: '+200 starting hoard' },
-    { id: 'storm_coast', name: 'Storm Coast', x: 45, y: 68, tier: 2, foeName: 'Storm mages', foes: ['stormcaller', 'mage', 'enchanter', 'bard'], rule: 'Combos deal 40% more damage.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
-    { id: 'ember_pass', name: 'Ember Pass', x: 54, y: 32, tier: 2, foeName: 'Fire brigands', foes: ['alchemist', 'hexblade', 'ogre', 'mage'], rule: 'Fire +30%.', reward: { souls: 3 }, rewardText: '+3 starting souls' },
-    { id: 'gilded_coast', name: 'Gilded Coast', x: 63, y: 66, tier: 3, foeName: 'Thieves\' guild', foes: ['rogue', 'burglar', 'duelist', 'cartographer'], rule: 'Thieves take 30% more. Kills pay 50% more.', reward: { boss: 'gilded_baron' }, rewardText: 'The Gilded Baron' },
+    { id: 'saints_march', name: 'Saint\'s March', x: 35, y: 34, tier: 2, foeName: 'The faithful', foes: ['cleric', 'paladin', 'templar', 'monk'], rule: 'Heroes have 10% more health.', reward: { hoard: 200 }, rewardText: '+200 starting hoard' },
+    { id: 'storm_coast', name: 'Storm Coast', x: 45, y: 68, tier: 3, foeName: 'Storm mages', foes: ['stormcaller', 'mage', 'enchanter', 'bard'], rule: 'Combos deal 25% more damage. Parties +1.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
+    { id: 'ember_pass', name: 'Ember Pass', x: 54, y: 32, tier: 3, foeName: 'Fire brigands', foes: ['alchemist', 'hexblade', 'ogre', 'mage'], rule: 'Fire +20%. Heroes +5% health.', reward: { souls: 3 }, rewardText: '+3 starting souls' },
+    { id: 'gilded_coast', name: 'Gilded Coast', x: 63, y: 66, tier: 4, foeName: 'Thieves\' guild', foes: ['rogue', 'burglar', 'duelist', 'cartographer'], rule: 'Thieves take 40% more. Kills pay 50% more.', reward: { boss: 'gilded_baron' }, rewardText: 'The Gilded Baron' },
     { id: 'bonefield', name: 'Bonefield', x: 72, y: 32, tier: 3, foeName: 'Grave wardens', foes: ['gravebinder', 'templar', 'sentinel', 'cleric'], rule: 'Minions cost 30% less. Parties +2.', reward: { minionHp: 0.1 }, rewardText: 'Minions +10% health' },
-    { id: 'frostmarch', name: 'Frostmarch', x: 80, y: 66, tier: 4, foeName: 'Frost guard', foes: ['frost_warden', 'sentinel', 'monk', 'knight'], rule: 'Frost +30%. Income 20% lower.', reward: { startGold: 150 }, rewardText: '+150 starting gold' },
-    { id: 'warlords_road', name: 'Warlord\'s Road', x: 87, y: 34, tier: 4, foeName: 'The warlord\'s army', foes: ['knight', 'ogre', 'duelist', 'sentinel'], rule: 'Every raid is elite.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
-    { id: 'capital', name: 'The Capital', x: 95, y: 58, tier: 6, foeName: 'The royal host', foes: ['paladin', 'inquisitor', 'templar', 'knight', 'mage'], rule: 'The last city. Everything at once.', reward: { hoard: 400 }, rewardText: '+400 starting hoard' }
+    { id: 'frostmarch', name: 'Frostmarch', x: 80, y: 66, tier: 4, foeName: 'Frost guard', foes: ['frost_warden', 'sentinel', 'monk', 'knight'], rule: 'Frost +30%. Income 10% lower.', reward: { startGold: 150 }, rewardText: '+150 starting gold' },
+    { id: 'warlords_road', name: 'Warlord\'s Road', x: 87, y: 34, tier: 4, foeName: 'The warlord\'s army', foes: ['knight', 'ogre', 'duelist', 'sentinel'], rule: 'Every second raid is elite.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
+    { id: 'capital', name: 'The Capital', x: 95, y: 58, tier: 5, foeName: 'The royal host', foes: ['paladin', 'inquisitor', 'templar', 'knight', 'mage'], rule: 'The last city. Everything at once.', reward: { hoard: 400 }, rewardText: '+400 starting hoard' }
   ];
   var BY = {};
   C.REGIONS.forEach(function (r) { BY[r.id] = r; });
@@ -14195,7 +14195,8 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.addFilter('heroStats', function (h, ctx) {
     var st = ctx && ctx.state, r = rid(st), t = tierOf(st);
     if (t) { h.maxHp = Math.round(h.maxHp * (1 + 0.04 * t)); h.hp = h.maxHp; }
-    if (r === 'saints_march' || capital(st)) { h.maxHp = Math.round(h.maxHp * 1.08); h.hp = h.maxHp; }
+    if (r === 'saints_march') { h.maxHp = Math.round(h.maxHp * 1.1); h.hp = h.maxHp; }
+    if (r === 'ember_pass') { h.maxHp = Math.round(h.maxHp * 1.05); h.hp = h.maxHp; }
     if (r === 'black_fen') h.data.speedMul = (h.data.speedMul || 1) * 0.95;
     return h;
   }, 34);
@@ -14205,9 +14206,9 @@ button { font-family: var(--font-body); color: var(--text); }
     var cause = c.cause;
     if (cause && cause.kind === 'trap' && st.ext.regionBonus) amt *= 1 + st.ext.regionBonus.trapDmg;
     if (r === 'black_fen' && c.type === 'lightning') amt *= 1.25;
-    if (r === 'ember_pass' && c.type === 'fire') amt *= 1.3;
+    if (r === 'ember_pass' && c.type === 'fire') amt *= 1.2;
     if (r === 'frostmarch' && c.type === 'frost') amt *= 1.3;
-    if (r === 'storm_coast' && cause && cause.rx) amt *= 1.4;
+    if (r === 'storm_coast' && cause && cause.rx) amt *= 1.25;
     return amt;
   }, 26);
   TT.addFilter('minionStats', function (m, ctx) {
@@ -14222,26 +14223,26 @@ button { font-family: var(--font-body); color: var(--text); }
     if (ctx.kind === 'dig' && C.treeHas(ctx.state, 'tunnel_lord')) mul *= 0.7;
     return mul === 1 ? c : { gold: Math.max(1, Math.round(c.gold * mul)), souls: c.souls };
   }, 42);
-  TT.addFilter('grabAmount', function (amt, ctx) { return rid(ctx.state) === 'gilded_coast' || capital(ctx.state) ? Math.round(amt * 1.3) : amt; }, 33);
+  TT.addFilter('grabAmount', function (amt, ctx) { return rid(ctx.state) === 'gilded_coast' ? Math.round(amt * 1.4) : capital(ctx.state) ? Math.round(amt * 1.15) : amt; }, 33);
   TT.addFilter('heroLoot', function (loot, ctx) {
     if (rid(ctx.state) === 'gilded_coast') loot.gold = Math.round(loot.gold * 1.5);
     return loot;
   }, 97);
   TT.addFilter('buildIncome', function (inc, ctx) {
-    if (rid(ctx && ctx.state) === 'frostmarch') inc.gold = Math.round(inc.gold * 0.8);
+    if (rid(ctx && ctx.state) === 'frostmarch') inc.gold = Math.round(inc.gold * 0.9);
     return inc;
   }, 5);
   var basePartySize = H.partySize;
   H.partySize = function (state) {
     var r = rid(state), n = basePartySize(state);
-    if (r === 'iron_deep') n += 1;
+    if (r === 'iron_deep' || r === 'storm_coast') n += 1;
     if (r === 'bonefield') n += 2;
     if (capital(state)) n += 1;
     return n;
   };
   TT.addFilter('party', function (party, ctx) {
     var st = ctx && ctx.state, r = rid(st);
-    if ((r === 'warlords_road' || capital(st)) && !(TT.growth.eliteName(st.raidNum))) {
+    if ((r === 'warlords_road' || capital(st)) && st.raidNum % 2 === 0 && !(TT.growth.eliteName(st.raidNum))) {
       party.forEach(function (s) { s.level = (s.level || 1) + 1; });
     }
     return party;
@@ -14324,6 +14325,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var d = data(), raids = (st.history || []).length, r = rid(st) || 'barrow_downs';
     var cq = d.conquest[r] || (d.conquest[r] = {});
     var res = { region: r, wasTaken: !!cq.taken };
+    cq.best = Math.max(cq.best || 0, raids);
     if (e.outcome === 'victory') { cq.taken = true; cq.boss = st.bossId; }
     var gained = raids + (e.outcome === 'victory' ? 12 : 0) + tierOf(st) * 2;
     var before = C.bossLevel(st.bossId);
@@ -14352,6 +14354,89 @@ button { font-family: var(--font-body); color: var(--text); }
     var st = e && e.state;
     if (st) { st.ext = st.ext || {}; if (!st.ext.region) st.ext.region = 'barrow_downs'; if (!st.ext.tree) st.ext.tree = {}; }
   });
+})(window.TT);
+
+</script>
+<script>/* src/systems/terrain.js */
+/*
+ * Tiny Tyrant — src/systems/terrain.js
+ * Headless-safe. Each region's rock is different, so a dungeon that worked on one map has to be rethought on the next.
+ *   B  bedrock: cannot be dug, so tunnels must bend around it
+ *   C  a cavern: already hollow, so it saves digging
+ * The corridor, the lair and the rock right beside them always stay clear.
+ * TT.terrain API: PATTERNS, apply(state, regionId), off (true in tools that want plain rock)
+ */
+(function (TT) {
+  'use strict';
+  var T = TT.TILES, G = TT.grid;
+  var X = TT.terrain = { off: false };
+
+  function circles(list) {
+    return function (x, y) {
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i], dx = x - c[0], dy = y - c[1];
+        if (dx * dx + dy * dy <= c[2] * c[2]) return 'C';
+      }
+      return null;
+    };
+  }
+  function crosses(list, arm) {
+    return function (x, y) {
+      for (var i = 0; i < list.length; i++) {
+        var dx = Math.abs(x - list[i][0]), dy = Math.abs(y - list[i][1]);
+        if ((dx === 0 && dy <= arm) || (dy === 0 && dx <= arm)) return 'B';
+      }
+      return null;
+    };
+  }
+  function rooms(list) {
+    return function (x, y) {
+      for (var i = 0; i < list.length; i++) if (Math.abs(x - list[i][0]) <= 1 && Math.abs(y - list[i][1]) <= 1) return 'C';
+      return null;
+    };
+  }
+
+  /* (x, y, d) where d is the distance from the corridor's row. */
+  X.PATTERNS = {
+    black_fen: circles([[10, 8, 3], [23, 25, 4], [29, 8, 3], [13, 26, 2.5], [20, 7, 2]]),
+    iron_deep: function (x, y) { return x % 7 < 2 && y % 7 < 2 ? 'B' : null; },
+    saints_march: crosses([[12, 8], [25, 8], [12, 24], [25, 24]], 3),
+    storm_coast: function (x, y, d) {
+      if (d < 3) return null;
+      return (y < 16 ? (x + y) % 12 : ((x - y) % 12 + 12) % 12) === 0 ? 'B' : null;
+    },
+    ember_pass: function (x, y) { return y <= 9 && x >= 7 ? 'B' : y >= 24 && x % 9 < 3 ? 'C' : null; },
+    gilded_coast: rooms([[9, 7], [18, 25], [27, 7], [10, 25], [28, 25], [18, 8]]),
+    bonefield: function (x, y, d) { return x % 5 === 0 && d >= 3 && d !== 8 && d !== 9 ? 'B' : null; },
+    frostmarch: function (x, y) { return (y === 8 || y === 24) && x % 9 !== 4 ? 'B' : null; },
+    warlords_road: function (x, y, d) { return d === 3 && x >= 6 && x % 8 > 1 ? 'B' : null; },
+    capital: function (x, y, d) {
+      if ((x === 33 || x === 34) && d >= 2 && d !== 8) return 'B';
+      return crosses([[12, 7], [22, 7], [12, 25], [22, 25]], 2)(x, y);
+    }
+  };
+
+  X.apply = function (state, regionId) {
+    var f = X.PATTERNS[regionId], g = state.grid;
+    if (!f || X.off) return 0;
+    var ey = g.entrance.y, L = g.lair, n = 0;
+    for (var y = 2; y < g.h - 2; y++) {
+      for (var x = 4; x < L.x - 1; x++) {
+        var d = Math.abs(y - ey);
+        if (d < 2 || G.get(g, x, y) !== T.ROCK) continue;
+        var k = f(x, y, d);
+        if (k === 'B') { G.set(g, x, y, T.BEDROCK); n++; }
+        else if (k === 'C') { G.set(g, x, y, T.FLOOR); n++; }
+      }
+    }
+    return n;
+  };
+
+  TT.addFilter('newRun', function (state, ctx) {
+    var o = (ctx && ctx.opts) || {};
+    X.apply(state, o.region || 'barrow_downs');
+    return state;
+  }, 22);
 })(window.TT);
 
 </script>
@@ -16416,7 +16501,8 @@ button { font-family: var(--font-body); color: var(--text); }
     /* Fit the whole grid in view. */
     fit: function (grid) {
       var w = grid.w * TT.TILE, h = grid.h * TT.TILE;
-      cam.zoom = U.clamp(Math.min((cam.vw - 40) / w, (cam.vh - 200) / h), cam.minZoom, cam.maxZoom);
+      var byW = (cam.vw - 40) / w, byH = (cam.vh - 200) / h;
+      cam.zoom = U.clamp(Math.min(byW, byH * 1.6), cam.minZoom, cam.maxZoom);
       cam.x = w / 2; cam.y = h / 2;
     },
     shake: function (mag, dur) {
@@ -16919,7 +17005,7 @@ button { font-family: var(--font-body); color: var(--text); }
       for (i = 0; i < n; i++) {
         var lv = Lm[i];
         var a = ambient;
-        if (tiles[i] === 0 || tiles[i] === 2) a *= 0.7;
+        if (tiles[i] === 0 || tiles[i] === 2) a *= 0.88;
         var lit = Math.min(1, lv + a);
         var darkness = 1 - lit;
         var o = i * 4;
@@ -17163,7 +17249,14 @@ button { font-family: var(--font-body); color: var(--text); }
   function drawRockTile(c, g, x, y, bed) {
     var px = x * T, py = y * T;
     var exposed = G.adjacentWalkable(g, x, y);
-    if (bed) {
+    if (bed && !G.isBorder(g, x, y)) {
+      c.fillStyle = TH.face[0]; c.fillRect(px, py, T, T);
+      c.fillStyle = TH.face[1];
+      c.beginPath(); c.moveTo(px, py + T); c.lineTo(px + T * 0.3, py + 5 + h2(x, y, 71) * 8); c.lineTo(px + T * 0.62, py + 10 + h2(x, y, 72) * 8); c.lineTo(px + T, py + 3 + h2(x, y, 73) * 10); c.lineTo(px + T, py + T); c.closePath(); c.fill();
+      c.fillStyle = 'rgba(255,240,220,0.13)'; c.fillRect(px + 4 + h2(x, y, 74) * 12, py + 4 + h2(x, y, 75) * 6, 7, 2); c.fillRect(px + 14 + h2(x, y, 76) * 10, py + 16 + h2(x, y, 77) * 6, 5, 2);
+      c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 1; c.strokeRect(px + 0.5, py + 0.5, T - 1, T - 1);
+      if (!exposed) return;
+    } else if (bed) {
       c.fillStyle = TH.bed; c.fillRect(px, py, T, T);
       c.strokeStyle = 'rgba(30,26,36,0.6)'; c.lineWidth = 1; c.beginPath();
       for (var d = -T; d < T; d += 8) { c.moveTo(px + d, py + T); c.lineTo(px + d + T, py); }
@@ -17173,7 +17266,7 @@ button { font-family: var(--font-body); color: var(--text); }
       c.fillStyle = exposed ? TH.rock : TH.deep;
       c.fillRect(px, py, T, T);
       for (var i = 0; i < (exposed ? 7 : 4); i++) {
-        c.fillStyle = exposed ? 'rgba(70,60,80,' + (0.12 + h2(x, y, 20 + i) * 0.18) + ')' : 'rgba(40,34,46,0.35)';
+        c.fillStyle = exposed ? 'rgba(70,60,80,' + (0.12 + h2(x, y, 20 + i) * 0.18) + ')' : 'rgba(70,62,82,0.3)';
         var rx = px + h2(x, y, 30 + i) * (T - 6), ry = py + h2(x, y, 40 + i) * (T - 6), rs = 2 + h2(x, y, 50 + i) * 5;
         c.beginPath(); c.moveTo(rx, ry + rs); c.lineTo(rx + rs * 0.6, ry); c.lineTo(rx + rs * 1.3, ry + rs * 0.4); c.lineTo(rx + rs, ry + rs * 1.1); c.closePath(); c.fill();
       }
@@ -21415,6 +21508,8 @@ button { font-family: var(--font-body); color: var(--text); }
     tension: function () { return tension; },
     mountControls: function (parent) { return mountControls(parent, true); },
     context: function () { return ctx; },
+    /* A copy of the final mix, for tools/trailer.js. */
+    tap: function () { var d = ctx.createMediaStreamDestination(); comp.connect(d); return d; },
     /* Output meter: {peak, rms} of the final mix over the last ~40ms (linear 0..1). */
     level: function () {
       if (!ctx) return { peak: 0, rms: 0 };
@@ -22292,7 +22387,8 @@ button { font-family: var(--font-body); color: var(--text); }
     render: function (el, p, a) {
       var st = TT.state, win = st && st.outcome === 'victory';
       el.classList.add(win ? 'outcome-victory' : 'outcome-defeat');
-      ui.el('h1', null, win ? 'The Hoard Endures' : 'The Barrow Falls', el);
+      var regionDef = st && st.ext && TT.conquest.region(st.ext.region);
+      ui.el('h1', null, win ? (regionDef ? regionDef.name + ' Crushed' : 'Victory') : 'Your Reign Ends', el);
       ui.el('div', 'sub', ui.esc((st && st.outcomeReason) || (win ? 'The season of raids is over.' : 'Your reign is ended.')), el);
       if (st) {
         var s = st.stats || {}, grid = ui.el('div', 'stat-grid', null, el);
@@ -22304,7 +22400,12 @@ button { font-family: var(--font-body); color: var(--text); }
       var extra = ui.el('div', null, null, el);
       TT.events.emit('gameOverShown', { el: extra, state: st, victory: win });
       var row = ui.el('div', 'row', null, el);
-      a.button('Return to Title', 'big primary', function () { TT.main.quitToTitle(); }, row);
+      if (st && !win) {
+        var again = { bossId: st.bossId, region: st.ext && st.ext.region, ascension: st.ascension || 0 };
+        a.button('Try Again', 'big primary', function () { TT.main.startNewRun(again.bossId, null, { region: again.region, ascension: again.ascension }); }, row);
+      }
+      if (st && win) a.button('March On', 'big primary', function () { TT.main.quitToTitle(); S.show('conquest'); }, row);
+      a.button('Title', 'big', function () { TT.main.quitToTitle(); }, row);
     }
   });
 })(window.TT);
@@ -23075,6 +23176,16 @@ button { font-family: var(--font-body); color: var(--text); }
   /* ================================================================== small helpers */
   function esc(s) { return ui().esc(s); }
   function el(tag, cls, html, parent) { return ui().el(tag, cls, html, parent); }
+  /* What each boss plays like, and how hard they are to win with. */
+  var PLAY = {
+    lich: ['Frail, with long-reach spells. Raises dead heroes to fight for you.', 'Medium'],
+    wyrm: ['A huge hoard and a fire breath. Traps cost more, and it bites harder as gold runs out.', 'Medium'],
+    hollow_king: ['Leads an army. Strong guards hold your corridors.', 'Easier'],
+    mother_of_webs: ['Webs slow everything down while her brood swarms them.', 'Easier'],
+    gilded_baron: ['Gold is power. The hoard earns interest, and spells cost gold.', 'Hard'],
+    drowned_queen: ['Floods the halls. Water makes lightning traps deadly.', 'Medium'],
+    clockwork_warden: ['Machines and turrets. Lives or dies by the layout.', 'Medium']
+  };
   var ROLE = { lich: 'Necromancer', wyrm: 'Hoarder', hollow_king: 'Commander', mother_of_webs: 'Brood-Mother', gilded_baron: 'Banker', drowned_queen: 'Tidecaller', clockwork_warden: 'Engineer' };
   var TARGET_WORD = { hero: 'one hero', tile: 'an area', minion: 'a servant', room: 'a room', self: 'around him', none: 'everywhere' };
   function bossUnlocked(b) {
@@ -23213,7 +23324,7 @@ button { font-family: var(--font-body); color: var(--text); }
     el('h2', null, 'Choose a Boss', el0);
     el('div', 'sub', 'One evil sleeps on the hoard. The rest is tunnels, patience, and the screaming.', el0);
     var top = el('div', 'mt-topline', infamyHtml(), el0);
-    a.button('The Black Ledger', '', function () { ui().screens.show('ledger', { back: 'bossSelect' }); }, top);
+    a.button('Upgrades', '', function () { ui().screens.show('ledger', { back: 'bossSelect' }); }, top);
     var sum = hasSave() ? saveSummary() : null;
     if (sum) el('div', 'mt-warn', 'This replaces your saved game.', el0);
 
@@ -23236,6 +23347,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var left = el('div', null, null, bar);
     var sb = selected ? TT.defs.bosses[selected] : null;
     el('div', 'who', sb ? esc(sb.name) + ' will wake<small>' + esc(sb.passive ? sb.passive.name + ' — ' + (ROLE[sb.id] || '').toLowerCase() : sb.desc) + '</small>' : 'No boss answers.', left);
+    if (sb && PLAY[sb.id]) el('div', 'tt-play', esc(PLAY[sb.id][0]) + '<small>' + esc(PLAY[sb.id][1]) + '</small>', left);
     boonsRow(left, rerender);
     if (sb) ascensionRow(left, sb.id, rerender);
     var right = el('div', 'row', null, bar);
@@ -23266,7 +23378,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var row = el('div', 'mt-item' + (item.owned ? ' owned' : ''), null, parent);
     row.appendChild(itemIcon(item));
     var mid = el('div', null, null, row);
-    el('div', 'k', { boss: 'Master', trap: 'Trap', minion: 'Servant', perk: 'Dark boon' }[item.kind] || '', mid);
+    el('div', 'k', { boss: 'Boss', trap: 'Trap', minion: 'Minion', perk: 'Boon' }[item.kind] || '', mid);
     el('div', 'n', esc(item.name), mid);
     el('div', 'd', esc(item.kind === 'boss' && item.def.flavor ? item.def.flavor : item.desc || ''), mid);
     var side = el('div', 'side', null, row);
@@ -23304,7 +23416,7 @@ button { font-family: var(--font-body); color: var(--text); }
 
     var cat = m.catalog();
     var groups = [
-      { title: 'Masters', kinds: ['boss'], empty: 'Every master already answers to you.' },
+      { title: 'Bosses', kinds: ['boss'], empty: 'Every boss already answers to you.' },
       { title: 'Dark Boons', kinds: ['perk'], empty: '' },
       { title: 'Forbidden Works', kinds: ['trap', 'minion'], empty: null }
     ];
@@ -23367,16 +23479,16 @@ button { font-family: var(--font-body); color: var(--text); }
       se.log.forEach(function (line) { el('div', 'tale', esc(line), panel); });
     }
     el('h3', null, 'Infamy Earned', panel);
-    if (!aw.lines.length) el('div', 'mt-empty', 'No one will remember this reign.', panel);
+    if (!aw.lines.length) el('div', 'mt-empty', 'Nothing earned.', panel);
     aw.lines.forEach(function (l) { el('div', 'ln', '<span>' + esc(l.label) + '</span><span>+' + l.amount + '</span>', panel); });
     el('div', 'tot', '<span>Total</span><b>+' + aw.total + '</b>', panel);
-    el('div', 'ln', '<span>Infamy in the ledger</span><span>' + (aw.balance != null ? aw.balance : m.data.infamy) + '</span>', panel);
+    el('div', 'ln', '<span>Infamy to spend</span><span>' + (aw.balance != null ? aw.balance : m.data.infamy) + '</span>', panel);
     var can = m.affordable();
     if (can.length) {
-      el('div', 'new', 'The ledger now offers: ' + can.slice(0, 4).map(function (c) { return esc(c.name) + ' (' + c.cost + ')'; }).join(', ') + (can.length > 4 ? '…' : ''), panel);
+      el('div', 'new', 'You can buy: ' + can.slice(0, 4).map(function (c) { return esc(c.name) + ' (' + c.cost + ')'; }).join(', ') + (can.length > 4 ? '…' : ''), panel);
     }
     var row = el('div', 'row', null, panel);
-    ui().screenApi.button('Open the Black Ledger', '', function () {
+    ui().screenApi.button(can.length ? 'Buy Upgrades (' + can.length + ')' : 'Upgrades', can.length ? 'primary' : '', function () {
       TT.main.quitToTitle();
       ui().screens.show('ledger', { back: 'title' });
     }, row);
@@ -25117,7 +25229,9 @@ button { font-family: var(--font-body); color: var(--text); }
     shown = offer;
   }
   function poll() {
-    var st = TT.state, offer = st && st.phase === 'build' && !ui.screens.isOpen() ? TT.trapbook.offer(st) : null;
+    var st = TT.state;
+    if (st && TT.tutorial && TT.tutorial.firstNight(st) && st.ext.trapbook) st.ext.trapbook.offer = null;
+    var offer = st && st.phase === 'build' && !ui.screens.isOpen() ? TT.trapbook.offer(st) : null;
     if (!offer) { if (shown) hide(); return; }
     if (shown !== offer) show(st, offer);
   }
@@ -25692,7 +25806,7 @@ button { font-family: var(--font-body); color: var(--text); }
     '.cq-info h3{margin:0;font-weight:normal;font-size:18px}',
     '.cq-info p{margin:2px 0 0;font-size:13px;color:var(--text-dim)}',
     '.cq-info .rw{color:#ffd24a}',
-    '.cq-sum{position:absolute;left:50%;top:88px;transform:translateX(-50%);z-index:5;font-size:14px;letter-spacing:.12em;color:#ffcf7a;text-shadow:0 2px 3px #000;white-space:nowrap}',
+    '.cq-sum{position:absolute;left:50%;top:100px;transform:translateX(-50%);z-index:5;font-size:14px;letter-spacing:.12em;color:#ffcf7a;text-shadow:0 2px 3px #000;white-space:nowrap}',
     '.tt-tree-lv{text-align:center;font-size:16px;color:#ffcf7a;margin-bottom:12px}',
     '.tt-tree-lv small{display:block;font-size:12px;color:var(--text-faint)}',
     '#tt-evo{position:absolute;inset:0;z-index:44;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;background:radial-gradient(circle,rgba(60,20,90,.9),rgba(5,3,7,.96))}',
@@ -25725,7 +25839,8 @@ button { font-family: var(--font-body); color: var(--text); }
   function placeToken(t, r) {
     t.style.left = r.x + '%'; t.style.top = r.y + '%';
     // stands beside the landmark, on whichever side has room
-    t.style.marginLeft = r.x < 14 ? '36px' : '';
+    t.style.marginLeft = r.x < 14 ? '60px' : '';
+    t.style.marginTop = r.x < 14 ? '-30px' : '';
   }
   function makeNode(map, r, state) {
     var n = ui.el('div', 'cq-node ' + state, '<span>' + ui.esc(r.name) + '</span>', map);
@@ -25815,6 +25930,8 @@ button { font-family: var(--font-body); color: var(--text); }
         ui.el('p', null, ui.esc(r.rule), left);
         var foes = ui.el('div', 'cq-foes', '<span>' + ui.esc(r.foeName) + '</span>', left);
         r.foes.forEach(function (id) { if (TT.defs.heroes[id]) foes.appendChild(TT.sprites.icon('hero_' + id, 30)); });
+        var best = C.status(r.id).best;
+        if (best && !C.status(r.id).taken) ui.el('p', null, 'Best: raid ' + best + ' of 20', left);
         ui.el('p', 'rw', (allDone ? 'Replay. ' : 'Reward: ') + ui.esc(r.rewardText), left);
       }
       fillInfo(cur);
@@ -26284,8 +26401,10 @@ button { font-family: var(--font-body); color: var(--text); }
     if (s.point) light(s.point());
   }
   TT.tutorial = {
+    firstNight: function (st) { return !isDone() && st.raidNum === 1; },
     restart: function () { data().tutorial = 'again'; data().tips = {}; stepNo = -1; M.save(); }
   };
+  /* The first night has no card to choose: the lesson comes first, and the choices start on night two. */
   TT.events.on('runStart', function () { stepNo = -1; });
 
   /* ------------------------------------------------------------------ one-time tips */
@@ -26456,6 +26575,7 @@ button { font-family: var(--font-body); color: var(--text); }
 
   var CSS = [
     '.dm-end{max-width:640px}',
+    '.dm-end .pic{display:flex;justify-content:center}',
     '.dm-end .pic canvas{width:170px;height:170px;filter:drop-shadow(0 0 26px #b07cff)}',
     '.dm-end .score{font-family:var(--font-display);font-size:30px;color:#ffe2a8;margin:4px 0 14px}',
     '.dm-end ul{list-style:none;padding:0;margin:0 0 20px;font-size:17px;line-height:1.7;color:var(--text)}',
@@ -26515,6 +26635,106 @@ button { font-family: var(--font-body); color: var(--text); }
 })(window.TT);
 
 </script>
+<script>/* src/ui/polish.js */
+/*
+ * Tiny Tyrant — src/ui/polish.js
+ * Loaded last among the UI scripts. The first impression: a title screen with art, readable toolbars, and layouts
+ * that keep tips clear of messages and work on a phone held upright.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  var ui = TT.ui;
+
+  var CSS = [
+    // toolbar: every trap shows its name
+    '.tool{width:62px;height:auto;min-height:76px;padding-bottom:3px}',
+    '.tool .nm{flex:0 0 11px;max-width:60px;height:11px;line-height:11px}',
+    '.tool .cost{flex:0 0 auto}',
+    '.tool .tt-pow{flex:0 0 auto}',
+    // tips sit above the toolbar, clear of banners and error messages
+    '#tt-coach{top:auto;bottom:156px}',
+    // the score says what it is
+    '#tt-score::before{content:"Score ";opacity:.65;font-size:11px}',
+    '#tt-score:empty::before{content:""}',
+    // title
+    '.tt-titlebg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:#07040a}',
+    '.tt-titlebg .map{position:absolute;inset:-3%;filter:saturate(1) brightness(.85)}',
+    '.tt-titlebg .veil{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 42%,rgba(40,10,4,.2),rgba(5,2,6,.7) 75%),linear-gradient(180deg,rgba(5,2,6,.3),rgba(5,2,6,.2) 45%,rgba(5,2,6,.9))}',
+    '.tt-titlebg canvas.bs{position:absolute;bottom:2%;image-rendering:pixelated;filter:drop-shadow(0 0 28px rgba(255,110,30,.55))}',
+    '.tt-titlescr{position:relative;z-index:1}',
+    '.scr h1{font-weight:700;letter-spacing:.1em;line-height:1.05;text-shadow:none;animation:none;background:linear-gradient(180deg,#fff2c4 8%,#ffd24a 48%,#c8601a 96%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 3px 0 #2a0f05) drop-shadow(0 0 18px rgba(255,110,20,.6))}',
+    '.outcome-defeat h1{background:linear-gradient(180deg,#ffc0a8 8%,#e0604c 55%,#8a2018 96%);-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 3px 0 #200806) drop-shadow(0 0 18px rgba(200,30,20,.6))}',
+    '.tt-titlescr h1{letter-spacing:.14em;font-size:clamp(46px,9vw,112px);margin-bottom:10px;background:linear-gradient(180deg,#fff2c4 8%,#ffd24a 48%,#c8601a 96%);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:none;filter:drop-shadow(0 3px 0 #2a0f05) drop-shadow(0 0 22px rgba(255,110,20,.75));animation:none}',
+    '.tt-tagline{font-size:17px;color:#ffe2a8;letter-spacing:.04em;margin:-2px 0 16px;text-shadow:0 2px 4px #000}',
+    '@media (max-width:980px){.tt-titlebg canvas.bs{display:none}}',
+    // upgrades read clearly
+    '.scr .mt-pact,.mt-tree .opt{color:var(--text)}',
+    // choosing a boss: what they play like
+    '.tt-play{font-size:16px;color:#ffe2a8;text-align:left}',
+    '.tt-play small{display:block;margin-top:3px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c8a0ff}',
+    // a phone held upright
+    '@media (max-width:640px){',
+    '#toolbar{flex-direction:column;gap:4px;width:calc(100vw - 12px);max-width:calc(100vw - 12px);padding:4px 5px;bottom:4px}',
+    '#toolbar .tb-sep{display:none}',
+    '.tb-row{flex-wrap:wrap}',
+    '.tb-tab{padding:0 6px!important;font-size:11px!important;letter-spacing:0!important}',
+    '.tool{width:52px;min-height:66px}',
+    '.tool .nm{max-width:50px;font-size:9px}',
+    '#tt-coach{bottom:210px}',
+    '#tt-limit{top:98px}',
+    '#tt-book{justify-content:flex-start;overflow-y:auto}',
+    '#hud-boss,.hud-boss{max-width:calc(100vw - 8px)}',
+    '.spells{flex-wrap:wrap;justify-content:center}',
+    '}'
+  ].join('');
+
+  /* ------------------------------------------------------------------ title */
+  var BACK = ['lich', 'wyrm'];
+  function dressTitle(scr) {
+    scr.classList.add('tt-titlescr');
+    var bg = document.createElement('div');
+    bg.className = 'tt-titlebg';
+    var map = document.createElement('div');
+    map.className = 'map';
+    bg.appendChild(map);
+    var veil = document.createElement('div');
+    veil.className = 'veil';
+    bg.appendChild(veil);
+    BACK.forEach(function (id, i) {
+      var c = TT.sprites.icon('boss_' + id, 300);
+      c.className = 'bs';
+      c.style.cssText = 'width:230px;height:230px;' + (i ? 'right:5%;transform:scaleX(-1)' : 'left:5%');
+      bg.appendChild(c);
+    });
+    scr.parentNode.insertBefore(bg, scr);
+    try {
+      var C = TT.conquest;
+      TT.worldMap.mount(map, C.REGIONS, function (id) { return C.status(id).taken ? 'crushed' : id === C.current().id ? 'cur' : 'locked'; });
+    } catch (e) { TT.reportError('title map', e); }
+    var h1 = scr.querySelector('h1');
+    if (h1) {
+      var line = document.createElement('div');
+      line.className = 'tt-tagline';
+      line.textContent = 'You are the dungeon boss. They want your gold.';
+      h1.parentNode.insertBefore(line, h1.nextSibling);
+    }
+  }
+  TT.events.on('screenShow', function (e) {
+    document.querySelectorAll('.tt-titlebg').forEach(function (b) { b.remove(); });
+    if (e.name !== 'title') return;
+    var scr = document.querySelector('.scr');
+    if (scr) dressTitle(scr);
+  });
+
+  TT.events.on('uiReady', function () {
+    var s = document.createElement('style');
+    s.textContent = CSS;
+    document.head.appendChild(s);
+  });
+})(window.TT);
+
+</script>
 <script>/* src/main.js */
 /*
  * Tiny Tyrant — boot, main loop (fixed-step sim, interpolated render, speed controls) and input.
@@ -26548,6 +26768,8 @@ button { font-family: var(--font-body); color: var(--text); }
     /* Make a state the active run and show the game view. */
     adoptState: function (state) {
       TT.state = state;
+      var oldCard = document.getElementById('tt-evo');
+      if (oldCard) oldCard.remove();
       acc = 0; pendingAftermath = -1;
       if (TT.particles) TT.particles.clear();
       ui.screens.hide();
@@ -26623,6 +26845,8 @@ button { font-family: var(--font-body); color: var(--text); }
     },
     quitToTitle: function () {
       TT.state = null;
+      var oldCard = document.getElementById('tt-evo');
+      if (oldCard) oldCard.remove();
       ui.hud.setVisible(false);
       ui.build.setTool(null);
       ui.screens.show('title');
