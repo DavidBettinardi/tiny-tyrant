@@ -26269,6 +26269,7 @@ button { font-family: var(--font-body); color: var(--text); }
     return S.isOpen() || document.querySelector('#tt-book:not(.hidden)') || document.getElementById('tt-evo') || document.getElementById('tt-intro');
   }
   function sync() {
+    if (box && tipOn && blocked()) { clearTimeout(tipTimer); tipOn = false; box.classList.add('hidden'); }
     if (!box || tipOn) return;
     var state = st();
     if (!state || !ui.hud.visible || isDone()) { if (!tipOn) box.classList.add('hidden'); unlight(); return; }
