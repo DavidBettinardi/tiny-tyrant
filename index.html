@@ -1301,7 +1301,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (e.status.web || e.status.stun) m = 0;
     if (e.data.speedMul) m *= e.data.speedMul;
     if (e.data.chargeMul) m *= e.data.chargeMul;
-    if (e.carried > 0 && TT.pressure) m *= TT.pressure.carrySpeed;
+    if (e.carried > 0 && TT.pressure) m *= TT.pressure.carrySpeed(e);
     return m;
   };
   C.canAct = function (e) { return TT.isActive(e) && !e.status.stun; };
@@ -3100,7 +3100,7 @@ button { font-family: var(--font-body); color: var(--text); }
     trigger: 'proximity',
     radius: 1.2,
     dmg: 10,
-    cooldown: 14,
+    cooldown: 20,
     detectMul: 0.8, disarmMul: 0.7, disarmTime: 3,
     tags: ['floor', 'poison', 'area', 'lingering', 'friendly-fire'],
     counters: ['cleric', 'mage', 'poison wards'],
@@ -3329,7 +3329,7 @@ button { font-family: var(--font-body); color: var(--text); }
     id: 'frost_glyph', name: 'Frost Glyph',
     desc: 'A rune of winter mana etched into the flagstone, rimed with hoarfrost. It bites and slows. Step on it while already sluggish and you freeze where you stand.',
     cost: { gold: 45, souls: 0 }, damageType: 'frost', trigger: 'step',
-    dmg: 18, cooldown: 3,
+    dmg: 24, cooldown: 3,
     detectMul: 0.9, disarmMul: 0.85, disarmTime: 2,
     light: { r: 1.6, color: '#7fd0ff', i: 0.3 },
     tags: ['floor', 'frost', 'rune', 'control'],
@@ -3747,7 +3747,7 @@ button { font-family: var(--font-body); color: var(--text); }
     h.anim.attack = 0.3;
     TT.events.emit('attack', { from: h, to: best, ranged: reach > 1.6, damageType: h.damageType, x: h.x, y: h.y, tx: best.x, ty: best.y });
     var cause = U.assign({}, s.cause, { via: 'mirror', damageType: h.damageType });
-    var dealt = CB.damage(best, h.dmg * 0.6, h.damageType, s.source, cause);
+    var dealt = CB.damage(best, h.dmg * 0.4, h.damageType, s.source, cause);
     var st = cause.uid != null && raid.report.trapStats[cause.uid];
     if (st) st.damage += dealt;
     if (TT.isActive(best)) moraleHit(best, -3, 'betrayed');
@@ -4076,13 +4076,13 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.registerTrap({
     id: 'mirror_hall', name: 'Hall of Mirrors',
     desc: 'Polished silver, slightly warped, set into the wall at the height of a frightened face. What looks back is wearing your armour and holding a knife. So, it seems, is the person next to you.',
-    cost: { gold: 85, souls: 1 }, damageType: 'shadow', placement: 'wall', trigger: 'proximity',
-    radius: 3.5, cooldown: 12, noDamage: true,
+    cost: { gold: 110, souls: 1 }, damageType: 'shadow', placement: 'wall', trigger: 'proximity',
+    radius: 3.5, cooldown: 14, noDamage: true,
     detectMul: 1.4, disarmMul: 0.7, disarmTime: 2.5,
     light: { r: 1.4, color: '#d8a0ff', i: 0.25 },
     tags: ['wall', 'shadow', 'mind', 'control'],
     counters: ['cleric', 'inquisitor'],
-    effectText: 'up to 2 heroes turn on the nearest comrade for 4s (2s if holy), striking for 60% and refusing to fight your forces; useless on a lone hero',
+    effectText: 'up to 2 heroes turn on the nearest comrade for 4s (2s if holy), striking for 40% and refusing to fight your forces; useless on a lone hero',
     canTrigger: function (ctx) {
       var v = ctx.victim;
       if (!v) return false;
@@ -4414,7 +4414,7 @@ button { font-family: var(--font-body); color: var(--text); }
   sig({
     id: 'grasping_hands', boss: 'lich', signature: 1, name: 'Grasping Hands', blurb: 'Roots a hero. A hero it kills rises as your skeleton.',
     desc: 'Grey hands push up through the flagstones and hold on.',
-    cost: { gold: 45, souls: 0 }, damageType: 'shadow', trigger: 'step', dmg: 30, cooldown: 4,
+    cost: { gold: 45, souls: 0 }, damageType: 'shadow', trigger: 'step', dmg: 36, cooldown: 3.5,
     onTrigger: function (ctx) {
       var v = ctx.victim; if (!v) return;
       ctx.damage(v, ctx.def.dmg);
@@ -4437,9 +4437,9 @@ button { font-family: var(--font-body); color: var(--text); }
     }
   });
   sig({
-    id: 'death_knell', boss: 'lich', signature: 3, name: 'Death Knell', blurb: 'Tolls every 12s: heavy damage and fear all around it.',
+    id: 'death_knell', boss: 'lich', signature: 3, name: 'Death Knell', blurb: 'Tolls when heroes come near: heavy damage and fear all around it.',
     desc: 'A funeral bell with nobody pulling the rope.',
-    cost: { gold: 130, souls: 2 }, damageType: 'shadow', trigger: 'timed', interval: 12, radius: 3.5, dmg: 34, cooldown: 12,
+    cost: { gold: 130, souls: 2 }, damageType: 'shadow', trigger: 'proximity', radius: 3.5, dmg: 34, cooldown: 12,
     onTrigger: function (ctx) {
       burst(ctx, ctx.def.radius).forEach(function (h) {
         ctx.damage(h, ctx.def.dmg);
@@ -4490,7 +4490,7 @@ button { font-family: var(--font-body); color: var(--text); }
   sig({
     id: 'crown_spikes', boss: 'hollow_king', signature: 1, name: 'Crown Spikes', blurb: 'Hits harder for every minion you have standing.',
     desc: 'Iron points that rise for the King\'s servants, and at their word.',
-    cost: { gold: 50, souls: 0 }, damageType: 'physical', trigger: 'step', dmg: 26, cooldown: 3.5,
+    cost: { gold: 50, souls: 0 }, damageType: 'physical', trigger: 'step', dmg: 32, cooldown: 3.5,
     onTrigger: function (ctx) {
       var v = ctx.victim; if (!v) return;
       ctx.damage(v, ctx.def.dmg * (1 + 0.12 * Math.min(12, minionsAlive(ctx))));
@@ -4710,7 +4710,7 @@ button { font-family: var(--font-body); color: var(--text); }
   reg({
     id: 'harpoon', name: 'Harpoon', blurb: 'One huge hit, exactly 2 tiles out. Holds them there.',
     desc: 'A barbed bolt that only knows one distance.',
-    cost: { gold: 60, souls: 0 }, damageType: 'physical', placement: 'wall', dmg: 78, cooldown: 5,
+    cost: { gold: 60, souls: 0 }, damageType: 'physical', placement: 'wall', dmg: 54, cooldown: 5,
     aim: {
       cells: [[0, -2, 1]],
       hit: function (ctx, h) { ctx.status(h, 'web', { duration: 1.2 }); }
@@ -6111,7 +6111,7 @@ button { font-family: var(--font-body); color: var(--text); }
     id: 'monk', name: 'Monk', rank: 2,
     desc: 'Barefoot, shaven-headed and unreasonably calm. Webs do not stick to them, cold does not slow them, and they cross a trapped floor like someone stepping over a sleeping dog.',
     role: 'hunter', leadPriority: 2.2,
-    hp: 84, dmg: 9, damageType: 'physical', speed: 1.8, attackRange: 1.15, attackCooldown: 0.65, armor: 1,
+    hp: 66, dmg: 9, damageType: 'physical', speed: 1.55, attackRange: 1.15, attackCooldown: 0.65, armor: 1,
     resist: { shadow: 0.15 }, immune: { slow: true, web: true }, statusResist: { fear: 0.6, stun: 0.4 },
     aggroRadius: 3.5, lightRadius: 2.2, lootValue: 24, fleeAt: 0.15,
     weight: 0.6, minRaid: 4, tags: ['melee', 'frontline', 'agile'],
@@ -6142,7 +6142,7 @@ button { font-family: var(--font-body); color: var(--text); }
     id: 'ogre', name: 'Ogre Sellsword', rank: 3,
     desc: 'Hired by the week and paid in mutton. Too big for the tunnels, and tunnels have learned not to mention it. Does not so much spring a pressure plate as end it.',
     role: 'tank', leadPriority: 3.2,
-    hp: 215, dmg: 19, damageType: 'physical', speed: 1.0, attackRange: 1.3, attackCooldown: 1.7, armor: 2,
+    hp: 155, dmg: 19, damageType: 'physical', speed: 1.0, attackRange: 1.3, attackCooldown: 1.7, armor: 2,
     resist: { poison: 0.2, frost: 0.15, fire: -0.1 }, statusResist: { stun: 0.5, fear: 0.3, slow: 0.25 },
     aggroRadius: 3, lightRadius: 2.4, lootValue: 40, fleeAt: 0.1,
     weight: 0.45, minRaid: 7, tags: ['melee', 'tank', 'frontline', 'giant'],
@@ -7133,7 +7133,7 @@ button { font-family: var(--font-body); color: var(--text); }
     lightRadius: 4.2, lightColor: '#ff6a2a', aggroRadius: 3.5,
     resist: { fire: 0.9, physical: 0.15, poison: 0.3, shadow: 0.1 },
     immune: { burn: true, fear: true },
-    startHoard: 1500,
+    startHoard: 1700,
     unlocked: true,
     flavor: 'Greedy — every trap costs 25% more gold, but he sleeps on a hoard of 1500.',
     passive: {
@@ -7287,7 +7287,7 @@ button { font-family: var(--font-body); color: var(--text); }
     id: 'hollow_king',
     name: 'The Hollow King',
     desc: 'A crown with nothing under it, still holding court. His sword cleaves through ranks; his servants fight as though he were watching. He usually is.',
-    hp: 1350, dmg: 26, damageType: 'physical', startHoard: 1500,
+    hp: 1450, dmg: 28, damageType: 'physical', startHoard: 1900,
     speed: 1.5, attackRange: 1.3, attackCooldown: 1.3, armor: 3,
     lightRadius: 3.6, lightColor: '#a77bff', aggroRadius: 3.5,
     resist: { shadow: 0.5, poison: 0.6, physical: 0.1, holy: 0.25 },
@@ -7581,7 +7581,7 @@ button { font-family: var(--font-body); color: var(--text); }
     id: 'mother_of_webs',
     name: 'The Mother of Webs',
     desc: 'Many-eyed, patient, and always hungry for more children. Every hero is a meal or a nursery.',
-    hp: 780, dmg: 19, damageType: 'poison',
+    hp: 680, dmg: 19, damageType: 'poison', startHoard: 850,
     speed: 1.75, attackRange: 1.4, attackCooldown: 1.2,
     lightRadius: 3.2, lightColor: '#b48bff', aggroRadius: 4,
     resist: { poison: 0.9, shadow: 0.2, fire: -0.35 },
@@ -7827,12 +7827,12 @@ button { font-family: var(--font-body); color: var(--text); }
     refundGold: 0.6,
     refundSouls: 0.5,
     incomeBase: 120,
-    incomePerRaid: 14,
+    incomePerRaid: 8,
     titheRate: 0.02,
-    titheMax: 50,
+    titheMax: 25,
     soulEvery: 3,              // +1 soul on every Nth build phase
-    lootBase: 11,
-    lootPerLevel: 5,
+    lootBase: 7,
+    lootPerLevel: 2,
     soulsPerTwoLevels: 1,
     eliteSouls: 2,
     grabBase: 105,
@@ -7924,7 +7924,7 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   H.heroLoot = function (hero, state) {
     var lvl = hero.level || 1, def = hero.def || {};
-    var gold = E.lootBase + E.lootPerLevel * (lvl - 1) + (def.lootValue || 0) + ((hero.data && hero.data.gearValue) || 0);
+    var gold = E.lootBase + E.lootPerLevel * (lvl - 1) + (def.lootValue || 0) * 0.4 + ((hero.data && hero.data.gearValue) || 0);
     var souls = 1 + E.soulsPerTwoLevels * Math.floor((lvl - 1) / 2) + (isElite(hero) ? E.eliteSouls : 0);
     return { gold: Math.round(gold), souls: souls };
   };
@@ -11270,7 +11270,7 @@ button { font-family: var(--font-body); color: var(--text); }
   };
   /* Dread: a ramp in hero toughness as word of the barrow spreads. Heroes no longer retreat when hurt,
      so they die more often and pay out more; the ramp is high to make up for it. */
-  var DREAD_BASE = 1.2, DREAD_STEP = 0.21, DREAD_MAX = 5.5;
+  var DREAD_BASE = 1.2, DREAD_STEP = 0.245, DREAD_MAX = 6;
   SEASON.dread = function (state) {
     var r = Math.max(1, state.raidNum || 1);
     return Math.min(DREAD_MAX, DREAD_BASE + DREAD_STEP * (r - 1));
@@ -12599,9 +12599,9 @@ button { font-family: var(--font-body); color: var(--text); }
     pop(state, 'fire+gas', 'Explosion', x, y, 3);
     raid.heroes.slice().forEach(function (h) {
       if (!TT.isActive(h) || U.dist(h.x, h.y, x + 0.5, y + 0.5) > 1.5) return;
-      if ((h.data.blastAt || -9) > raid.t - 0.4) return;   // one blast per hero, however much gas there was
+      if ((h.data.blastAt || -9) > raid.t - 1.5) return;   // one blast per hero, however much gas there was
       h.data.blastAt = raid.t;
-      hurt(state, h, dust ? 22 : 34, 'fire', 'Explosion', by);
+      hurt(state, h, dust ? 16 : 22, 'fire', 'Explosion', by);
       if (TT.isActive(h)) CB.applyStatus(h, 'stun', { duration: 0.7, cause: { kind: 'reaction', id: 'reaction', name: 'Explosion', damageType: 'fire', rx: 'Explosion' } });
     });
     fx('fire', { x: x + 0.5, y: y + 0.5, radius: 1.1 });
@@ -13154,7 +13154,7 @@ button { font-family: var(--font-body); color: var(--text); }
   var P = TT.pressure = {};
   var CHARGE_FROM = 3, CHARGE_SPEED = 0.11, CHARGE_MAX_SPEED = 1.8, CHARGE_GUARD = 0.12, CHARGE_MAX_GUARD = 0.3;
   var WISE_STEP = 0.035, WISE_FLOOR = 0.4, WISE_WARN = 0.7;
-  var GOLD_PER_TURN = 5, GOLD_TURN_CAP = 150;
+  var GOLD_PER_TURN = 5, GOLD_TURN_CAP = 90;
 
   P.chargeOf = function (h) { return Math.max(0, ((h.data && h.data.run) || 0) - CHARGE_FROM + 1); };
   function speedFor(run) { return run >= CHARGE_FROM ? Math.min(CHARGE_MAX_SPEED, 1 + CHARGE_SPEED * (run - CHARGE_FROM + 1)) : 1; }
@@ -13277,10 +13277,35 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.addFilter('heal', function (amt, c) {
     return c.target && c.target.kind === 'hero' && c.target.carried > 0 ? amt * CARRY_HEAL : amt;
   }, 30);
-  P.carrySpeed = CARRY_SPEED;
+  P.carrySpeed = function (h) { return h.def && h.def.tags && h.def.tags.indexOf('greedy') >= 0 ? 1.12 : CARRY_SPEED; };
 
   /* The barrow can only keep so many mechanisms wound, so where each one goes matters. */
-  P.trapLimit = function (state) { return 12 + 2 * (state.raidNum || 1) + (TT.glory && TT.glory.relic(state, 'overcharge') ? 4 : 0); };
+  P.trapLimit = function (state) { return 12 + 2 * (state.raidNum || 1) + (TT.glory && TT.glory.relic(state, 'overcharge') ? 4 : 0) + spend(state).slots; };
+  /* What spare gold buys: more room for traps at a rising price, or gold moved into the hoard at a poor rate. */
+  function spend(state) { state.ext = state.ext || {}; return state.ext.spend || (state.ext.spend = { slots: 0, stashNight: 0, stashed: 0 }); }
+  P.slotCost = function (state) { return 150 + 50 * spend(state).slots; };
+  P.buySlot = function (state) {
+    var c = P.slotCost(state);
+    if (state.phase !== 'build' || state.gold < c) return false;
+    TT.game.spend(state, { gold: c, souls: 0 }, 'other');
+    spend(state).slots++;
+    return true;
+  };
+  var STASH_GOLD = 100, STASH_HOARD = 50, STASH_PER_NIGHT = 3;
+  P.STASH_GOLD = STASH_GOLD; P.STASH_HOARD = STASH_HOARD;
+  P.stashLeft = function (state) {
+    var s = spend(state);
+    return s.stashNight === state.raidNum ? STASH_PER_NIGHT - s.stashed : STASH_PER_NIGHT;
+  };
+  P.stash = function (state) {
+    var s = spend(state);
+    if (state.phase !== 'build' || state.gold < STASH_GOLD || P.stashLeft(state) <= 0) return false;
+    if (s.stashNight !== state.raidNum) { s.stashNight = state.raidNum; s.stashed = 0; }
+    s.stashed++;
+    TT.game.spend(state, { gold: STASH_GOLD, souls: 0 }, 'other');
+    state.hoard += STASH_HOARD;
+    return true;
+  };
   P.trapsBuilt = function (state) {
     var n = 0;
     state.traps.forEach(function (t) { var d = TT.defs.traps[t.id]; if (d && !d.building) n++; });
@@ -13532,7 +13557,7 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.registerBoss({
     id: 'gilded_baron', name: 'The Gilded Baron',
     desc: 'A vampire noble who has never once given anything away.',
-    hp: 800, dmg: 20, damageType: 'physical', startHoard: 1250,
+    hp: 1100, dmg: 20, damageType: 'physical', startHoard: 1450,
     speed: 1.5, attackRange: 1.3, attackCooldown: 1, lightRadius: 3.8, lightColor: '#ffd24a', aggroRadius: 4,
     resist: { shadow: 0.3, holy: -0.2 }, immune: {},
     unlocked: false, unlockCost: 220, unlockText: 'Conquer the Gilded Coast, or pay infamy.',
@@ -13631,7 +13656,7 @@ button { font-family: var(--font-body); color: var(--text); }
   sig({
     id: 'gilded_spikes', boss: 'gilded_baron', signature: 3, name: 'Gilded Spikes', blurb: 'Hits harder the bigger your hoard is.',
     desc: 'Solid gold, and very sharp about it.',
-    cost: { gold: 110, souls: 1 }, damageType: 'physical', trigger: 'step', dmg: 24, cooldown: 3,
+    cost: { gold: 85, souls: 0 }, damageType: 'physical', trigger: 'step', dmg: 30, cooldown: 3,
     onTrigger: function (ctx) {
       var v = ctx.victim; if (!v) return;
       ctx.damage(v, ctx.def.dmg + ctx.state.hoard / 40);
@@ -13723,7 +13748,7 @@ button { font-family: var(--font-body); color: var(--text); }
   sig({
     id: 'eel_nest', boss: 'drowned_queen', signature: 2, name: 'Eel Nest', blurb: 'Lightning eels. Double damage to anyone soaked.',
     desc: 'They have been waiting for someone wet.',
-    cost: { gold: 70, souls: 0 }, damageType: 'lightning', trigger: 'proximity', radius: 2, dmg: 24, cooldown: 3,
+    cost: { gold: 80, souls: 0 }, damageType: 'lightning', trigger: 'proximity', radius: 2, dmg: 12, cooldown: 4,
     onTrigger: function (ctx) {
       burst(ctx, ctx.def.radius).forEach(function (h) {
         ctx.damage(h, ctx.def.dmg * (h.data.soakedUntil > ctx.raid.t ? 2 : 1));
@@ -13839,7 +13864,7 @@ button { font-family: var(--font-body); color: var(--text); }
   sig({
     id: 'sawblade_rail', boss: 'clockwork_warden', signature: 3, name: 'Sawblade Rail', blurb: 'A saw runs along the wall, hitting everyone close, again and again.',
     desc: 'It only ever stops to change direction.',
-    cost: { gold: 110, souls: 1 }, damageType: 'physical', placement: 'wall', trigger: 'proximity', radius: 2.5, dmg: 20, cooldown: 1.6,
+    cost: { gold: 110, souls: 1 }, damageType: 'physical', placement: 'wall', trigger: 'proximity', radius: 2.5, dmg: 13, cooldown: 2,
     onTrigger: function (ctx) {
       burst(ctx, ctx.def.radius).forEach(function (h) { ctx.damage(h, ctx.def.dmg); });
       ctx.fx('sparks', { color: '#ffb060' });
@@ -13942,7 +13967,8 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.addFilter('party', function (party, ctx) {
     var st = ctx && ctx.state;
     if (!st || !ELITE[st.raidNum]) return party;
-    party.forEach(function (s) { s.level = (s.level || 1) + 2; s.data = s.data || {}; s.data.elite = true; });
+    var extra = st.raidNum >= 15 ? 2 : 1;
+    party.forEach(function (s) { s.level = (s.level || 1) + extra; s.data = s.data || {}; s.data.elite = true; });
     return party;
   }, 90);
   TT.events.on('raidStart', function (e) {
@@ -14043,7 +14069,7 @@ button { font-family: var(--font-body); color: var(--text); }
     };
     TT.registerTrap(def);
   }
-  work({ id: 'mint', name: 'Mint', blurb: '+45 gold every night.', desc: 'Stamps your face on stolen silver.', cost: { gold: 150, souls: 0 }, minRaid: 2, max: 3 });
+  work({ id: 'mint', name: 'Mint', blurb: '+30 gold every night.', desc: 'Stamps your face on stolen silver.', cost: { gold: 150, souls: 0 }, minRaid: 2, max: 3 });
   work({ id: 'forge', name: 'Forge', blurb: 'Traps within 5 tiles deal 25% more damage.', desc: 'Sharpens everything nearby.', cost: { gold: 120, souls: 0 }, minRaid: 2, radius: 5, max: 4 });
   work({ id: 'barracks', name: 'Barracks', blurb: 'Minions posted within 4 tiles are 25% stronger.', desc: 'Bunks, bones and bad discipline.', cost: { gold: 110, souls: 0 }, minRaid: 3, radius: 4.5, max: 4 });
   work({ id: 'soul_well', name: 'Soul Well', blurb: '+1 soul every night.', desc: 'It hums when somebody dies.', cost: { gold: 100, souls: 1 }, minRaid: 4, max: 2 });
@@ -14058,7 +14084,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var st = ctx && ctx.state;
     if (!st) return inc;
     st.traps.forEach(function (t) {
-      if (t.id === 'mint') inc.gold += 45;
+      if (t.id === 'mint') inc.gold += 30;
       if (t.id === 'soul_well') inc.souls += 1;
     });
     return inc;
@@ -14101,9 +14127,9 @@ button { font-family: var(--font-body); color: var(--text); }
   /* In marching order. foes are the classes the region sends far more of. */
   C.REGIONS = [
     { id: 'barrow_downs', name: 'Barrow Downs', x: 8, y: 46, tier: 0, foeName: 'Local adventurers', foes: ['knight', 'rogue', 'ranger', 'burglar'], rule: 'No special rules.', reward: { startGold: 80 }, rewardText: '+80 starting gold' },
-    { id: 'black_fen', name: 'Black Fen', x: 15, y: 30, tier: 1, foeName: 'Fen hunters', foes: ['ranger', 'beastmaster', 'plague_doctor', 'pathfinder'], rule: 'Heroes 10% slower. Lightning +25%.', reward: { boss: 'drowned_queen' }, rewardText: 'The Drowned Queen' },
+    { id: 'black_fen', name: 'Black Fen', x: 15, y: 30, tier: 1, foeName: 'Fen hunters', foes: ['ranger', 'beastmaster', 'plague_doctor', 'pathfinder'], rule: 'Heroes 5% slower. Lightning +25%.', reward: { boss: 'drowned_queen' }, rewardText: 'The Drowned Queen' },
     { id: 'iron_deep', name: 'Iron Deep', x: 25, y: 64, tier: 1, foeName: 'Miners and machinists', foes: ['dwarf', 'delver', 'artificer', 'ogre'], rule: 'Digging is half price. Parties +1.', reward: { boss: 'clockwork_warden' }, rewardText: 'The Clockwork Warden' },
-    { id: 'saints_march', name: 'Saint\'s March', x: 35, y: 34, tier: 2, foeName: 'The faithful', foes: ['cleric', 'paladin', 'templar', 'monk'], rule: 'Heroes have 15% more health.', reward: { hoard: 200 }, rewardText: '+200 starting hoard' },
+    { id: 'saints_march', name: 'Saint\'s March', x: 35, y: 34, tier: 2, foeName: 'The faithful', foes: ['cleric', 'paladin', 'templar', 'monk'], rule: 'Heroes have 8% more health.', reward: { hoard: 200 }, rewardText: '+200 starting hoard' },
     { id: 'storm_coast', name: 'Storm Coast', x: 45, y: 68, tier: 2, foeName: 'Storm mages', foes: ['stormcaller', 'mage', 'enchanter', 'bard'], rule: 'Combos deal 40% more damage.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
     { id: 'ember_pass', name: 'Ember Pass', x: 54, y: 32, tier: 2, foeName: 'Fire brigands', foes: ['alchemist', 'hexblade', 'ogre', 'mage'], rule: 'Fire +30%.', reward: { souls: 3 }, rewardText: '+3 starting souls' },
     { id: 'gilded_coast', name: 'Gilded Coast', x: 63, y: 66, tier: 3, foeName: 'Thieves\' guild', foes: ['rogue', 'burglar', 'duelist', 'cartographer'], rule: 'Thieves take 30% more. Kills pay 50% more.', reward: { boss: 'gilded_baron' }, rewardText: 'The Gilded Baron' },
@@ -14167,9 +14193,9 @@ button { font-family: var(--font-body); color: var(--text); }
   /* Further regions make every hero tougher; that is what the better rewards pay for. */
   TT.addFilter('heroStats', function (h, ctx) {
     var st = ctx && ctx.state, r = rid(st), t = tierOf(st);
-    if (t) { h.maxHp = Math.round(h.maxHp * (1 + 0.05 * t)); h.hp = h.maxHp; }
-    if (r === 'saints_march' || capital(st)) { h.maxHp = Math.round(h.maxHp * 1.15); h.hp = h.maxHp; }
-    if (r === 'black_fen') h.data.speedMul = (h.data.speedMul || 1) * 0.9;
+    if (t) { h.maxHp = Math.round(h.maxHp * (1 + 0.04 * t)); h.hp = h.maxHp; }
+    if (r === 'saints_march' || capital(st)) { h.maxHp = Math.round(h.maxHp * 1.08); h.hp = h.maxHp; }
+    if (r === 'black_fen') h.data.speedMul = (h.data.speedMul || 1) * 0.95;
     return h;
   }, 34);
   TT.addFilter('damage', function (amt, c) {
@@ -14208,13 +14234,14 @@ button { font-family: var(--font-body); color: var(--text); }
   H.partySize = function (state) {
     var r = rid(state), n = basePartySize(state);
     if (r === 'iron_deep') n += 1;
-    if (r === 'bonefield' || capital(state)) n += 2;
+    if (r === 'bonefield') n += 2;
+    if (capital(state)) n += 1;
     return n;
   };
   TT.addFilter('party', function (party, ctx) {
     var st = ctx && ctx.state, r = rid(st);
     if ((r === 'warlords_road' || capital(st)) && !(TT.growth.eliteName(st.raidNum))) {
-      party.forEach(function (s) { s.level = (s.level || 1) + 2; });
+      party.forEach(function (s) { s.level = (s.level || 1) + 1; });
     }
     return party;
   }, 91);
@@ -14347,7 +14374,7 @@ button { font-family: var(--font-body); color: var(--text); }
   var C = TT.captives = {};
 
   C.next = function (state) { return (state.captives || [])[0] || null; };
-  C.ransomGold = function (c) { return 60 + 25 * Math.max(1, c.level || 1); };
+  C.ransomGold = function (c) { return 40 + 15 * Math.max(1, c.level || 1); };
   C.turnCost = function () { return 2; };
   function release(state, c) {
     state.captives.shift();
@@ -25330,7 +25357,7 @@ button { font-family: var(--font-body); color: var(--text); }
   if (typeof document === 'undefined') return;
   var ui = TT.ui, E = TT.elements, N = TT.nemesis, IC = TT.icons, J = TT.juice;
   var C = ui.clarity = {};
-  var wanted = null, chartBtn = null, chart = null, wantedKey = '', limitChip = null;
+  var wanted = null, chartBtn = null, chart = null, wantedKey = '', limitChip = null, limitText = null, slotBtn = null, stashBtn = null;
 
   var CSS = [
     '.tt-icon{display:inline-block;vertical-align:middle}',
@@ -25346,7 +25373,10 @@ button { font-family: var(--font-body); color: var(--text); }
     '#tt-book .tt-combos{justify-content:center}',
     '#tt-chartbtn{position:absolute;left:10px;top:64px;z-index:6;width:44px;height:44px;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;background:var(--panel);border:1px solid var(--edge);border-radius:4px}',
     '#tt-chartbtn:hover{border-color:#e9a55f}',
-    '#tt-limit{position:absolute;left:62px;top:74px;z-index:6;padding:4px 10px;font-size:14px;color:var(--text);background:var(--panel);border:1px solid var(--edge);border-radius:4px}',
+    '#tt-limit{position:absolute;left:62px;top:64px;z-index:6;display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:4px 8px;font-size:14px;color:var(--text);background:var(--panel);border:1px solid var(--edge);border-radius:4px}',
+    '#tt-limit button{min-height:28px;padding:0 8px;font-size:12px;cursor:pointer;background:transparent;border:1px solid var(--edge);border-radius:3px;color:#ffcf7a;font-family:var(--font-body);white-space:nowrap}',
+    '#tt-limit button:hover:not(:disabled){border-color:#e9a55f}',
+    '#tt-limit button:disabled{opacity:.4;cursor:default}',
     '#tt-limit.full{color:#ff8a6a;border-color:#ff8a6a}',
     '#tt-chart{position:absolute;inset:0;z-index:42;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;background:rgba(5,3,7,.9)}',
     '#tt-chart h2{margin:0;font-weight:normal;letter-spacing:.2em;text-transform:uppercase;font-size:20px;color:var(--text)}',
@@ -25463,8 +25493,13 @@ button { font-family: var(--font-body); color: var(--text); }
       limitChip.classList.toggle('hidden', !on);
       if (on) {
         var built = TT.pressure.trapsBuilt(st), cap = TT.pressure.trapLimit(st);
-        limitChip.textContent = 'Traps ' + built + ' / ' + cap;
+        limitText.textContent = 'Traps ' + built + ' / ' + cap;
         limitChip.classList.toggle('full', built >= cap);
+        slotBtn.textContent = '+1 slot: ' + TT.pressure.slotCost(st) + 'g';
+        slotBtn.disabled = st.gold < TT.pressure.slotCost(st);
+        var left = TT.pressure.stashLeft(st);
+        stashBtn.textContent = 'Stash ' + TT.pressure.STASH_GOLD + 'g: +' + TT.pressure.STASH_HOARD + ' hoard (' + left + ')';
+        stashBtn.disabled = st.gold < TT.pressure.STASH_GOLD || left <= 0;
       }
     }
     var k = next.map(function (r) { return r.heroId + r.rank + r.resist.join(); }).join('|');
@@ -25585,6 +25620,11 @@ button { font-family: var(--font-body); color: var(--text); }
     chartBtn.appendChild(IC.el('oil', 16));
     chartBtn.addEventListener('click', function () { ui.click(); showChart(); });
     limitChip = ui.el('div', 'hidden', null, root); limitChip.id = 'tt-limit';
+    limitText = ui.el('span', null, '', limitChip);
+    slotBtn = ui.el('button', null, '', limitChip);
+    slotBtn.addEventListener('click', function () { if (TT.pressure.buySlot(TT.state)) { ui.click(); syncWanted(); } });
+    stashBtn = ui.el('button', null, '', limitChip);
+    stashBtn.addEventListener('click', function () { if (TT.pressure.stash(TT.state)) { ui.click(); syncWanted(); } });
     setInterval(syncWanted, 300);
   });
 })(window.TT);
@@ -25649,7 +25689,7 @@ button { font-family: var(--font-body); color: var(--text); }
     '#tt-evo .card span{font-size:13px;color:var(--text-dim)}',
     '.mt-card.locked{display:flex;flex-direction:column}',
     '.mt-card.locked .mt-veil{position:static;inset:auto;margin-top:6px;padding:6px 0 0;background:none;height:auto}',
-    '#tt-spy{position:absolute;left:10px;top:118px;z-index:6;width:150px;padding:8px;background:var(--panel);border:1px solid #8fd0ff;border-radius:4px;color:var(--text);font-size:13px}',
+    '#tt-spy{position:absolute;left:10px;top:150px;z-index:6;width:150px;padding:8px;background:var(--panel);border:1px solid #8fd0ff;border-radius:4px;color:var(--text);font-size:13px}',
     '#tt-spy .w{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#8fd0ff;text-align:center;margin-bottom:4px}',
     '#tt-spy .list{display:flex;flex-wrap:wrap;gap:2px 8px}',
     '#tt-spy .one{display:flex;align-items:center;gap:1px}',
