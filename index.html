@@ -14990,6 +14990,23 @@ button { font-family: var(--font-body); color: var(--text); }
 })(window.TT);
 
 </script>
+<script>/* src/systems/demo.js */
+/*
+ * Tiny Tyrant — src/systems/demo.js
+ * The free demo is this same game with window.TT_DEMO set (tools/bundle.js builds it into dist/demo).
+ * One boss, one region, raids 1 to 5, ending when the boss first evolves. It keeps its own saves.
+ * Set STORE_URL once the Steam page exists, and the demo starts pointing people to it.
+ */
+(function (TT) {
+  'use strict';
+  var on = typeof window !== 'undefined' && !!window.TT_DEMO;
+  TT.demo = { on: on, boss: 'wyrm', region: 'barrow_downs', STORE_URL: '' };
+  if (!on) return;
+  TT.meta.STORAGE_KEY = 'tinytyrant.demo.meta';
+  TT.save.KEY = 'tinytyrant.demo.run';
+})(window.TT);
+
+</script>
 <script>/* assets/sprites/manifest.js */
 /*
  * Tiny Tyrant — sprite override manifest.
@@ -25843,7 +25860,7 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   function sync() {
     var st = TT.state;
-    if (!st || st.phase !== 'build' || !ui.hud.visible || S.isOpen() || document.getElementById('tt-evo')) return;
+    if (!st || st.phase !== 'build' || !ui.hud.visible || S.isOpen() || TT.demo.ended || document.getElementById('tt-evo')) return;
     var evo = Gr.pendingEvolution(st);
     if (evo) {
       var o = overlay(), def = TT.defs.bosses[st.bossId], stage = Gr.stage(st) + 1;
@@ -26421,6 +26438,77 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.events.on('uiReady', function () {
     var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
     setInterval(function () { document.body.setAttribute('data-phase', TT.state ? TT.state.phase : ''); }, 200);
+  });
+})(window.TT);
+
+</script>
+<script>/* src/ui/demo.js */
+/*
+ * Tiny Tyrant — src/ui/demo.js
+ * The demo's title and ending. Does nothing in the full game.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined' || !TT.demo.on) return;
+  var ui = TT.ui, S = ui.screens, D = TT.demo;
+
+  var CSS = [
+    '.dm-end{max-width:640px}',
+    '.dm-end .pic canvas{width:170px;height:170px;filter:drop-shadow(0 0 26px #b07cff)}',
+    '.dm-end .score{font-family:var(--font-display);font-size:30px;color:#ffe2a8;margin:4px 0 14px}',
+    '.dm-end ul{list-style:none;padding:0;margin:0 0 20px;font-size:17px;line-height:1.7;color:var(--text)}',
+    '.dm-tag{font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:#ffcf7a;margin:-12px 0 16px}'
+  ].join('');
+
+  function play() { TT.main.startNewRun(D.boss, null, { region: D.region }); }
+  function storeButton(a, row, cls) {
+    if (D.STORE_URL) a.button('Wishlist on Steam', cls || 'big primary', function () { window.open(D.STORE_URL, '_blank', 'noopener'); }, row);
+  }
+  S.register('title', {
+    render: function (el, p, a) {
+      ui.el('h1', null, 'Tiny Tyrant', el);
+      ui.el('div', 'dm-tag', 'Free Demo', el);
+      var menu = ui.el('div', 'menu', null, el), hasSave = false;
+      try { hasSave = !!TT.hooks.hasSave(); } catch (e) { hasSave = false; }
+      if (hasSave) a.button('Continue', 'big primary', function () { TT.main.continueRun(); }, menu);
+      a.button('Play', 'big' + (hasSave ? '' : ' primary'), play, menu);
+      a.button('Settings', 'big', function () { ui.settings.open(); }, menu);
+      storeButton(a, menu, 'big');
+    }
+  });
+  S.register('demoEnd', {
+    render: function (el, p, a) {
+      el.classList.add('dm-end');
+      var st = TT.state, def = st && TT.defs.bosses[st.bossId];
+      ui.el('h2', null, 'End of the Demo', el);
+      if (def) ui.el('div', 'pic', null, el).appendChild(TT.sprites.icon('boss_' + def.id, 170));
+      if (st) ui.el('div', 'score', TT.achievements.score(st).toLocaleString() + ' score', el);
+      var list = ui.el('ul', null, null, el);
+      [TT.list('bosses').length + ' bosses, each with their own traps and dungeon',
+        TT.conquest.REGIONS.length + ' regions to crush, each sending its own heroes',
+        TT.list('traps', function (d) { return !d.building; }).length + ' traps, 17 combos, and heroes who come back for revenge',
+        'Your boss still has two more forms'].forEach(function (t) { ui.el('li', null, ui.esc(t), list); });
+      var row = ui.el('div', 'row', null, el);
+      storeButton(a, row);
+      a.button('Play Again', D.STORE_URL ? 'big' : 'big primary', function () { D.ended = false; if (TT.save.clear) TT.save.clear(); play(); }, row);
+    }
+  });
+  /* The demo ends on its best moment: the first evolution. */
+  TT.events.on('bossEvolved', function () {
+    D.ended = true;
+    setTimeout(function () { S.show('demoEnd'); }, 1800);
+  });
+  TT.events.on('gameOverShown', function (e) {
+    if (!D.STORE_URL || !e.el) return;
+    var b = document.createElement('button');
+    b.className = 'tt-btn big';
+    b.textContent = 'Wishlist on Steam';
+    b.addEventListener('click', function () { window.open(D.STORE_URL, '_blank', 'noopener'); });
+    e.el.appendChild(b);
+  });
+  TT.events.on('uiReady', function () {
+    var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
+    document.title = 'Tiny Tyrant Demo';
   });
 })(window.TT);
 
