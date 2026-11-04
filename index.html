@@ -25664,7 +25664,11 @@ button { font-family: var(--font-body); color: var(--text); }
     var h = TT.meta.data.history[0], id = h && TT.defs.bosses[h.bossId] ? h.bossId : 'lich';
     return id;
   }
-  function placeToken(t, r) { t.style.left = r.x + '%'; t.style.top = r.y + '%'; }
+  function placeToken(t, r) {
+    t.style.left = r.x + '%'; t.style.top = r.y + '%';
+    // stands beside the landmark, on whichever side has room
+    t.style.marginLeft = r.x < 14 ? '36px' : '';
+  }
   function makeNode(map, r, state) {
     var n = ui.el('div', 'cq-node ' + state, '<span>' + ui.esc(r.name) + '</span>', map);
     n.style.left = r.x + '%'; n.style.top = r.y + '%';
