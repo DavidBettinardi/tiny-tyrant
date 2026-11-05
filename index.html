@@ -19291,6 +19291,7 @@ button { font-family: var(--font-body); color: var(--text); }
   var seeded = W.seeded = function (n) { var s = n >>> 0 || 1; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; };
   /* Breaks each edge into pieces and nudges the corners, so no line is ruler straight. */
   var cut = W.cut = function (points, amp, r) {
+    if (!(amp > 0)) return points.slice(); // a zero-size window (an embed that hasn't laid out yet) has nothing to roughen
     var out = [];
     for (var i = 0; i < points.length; i++) {
       var a = points[i], b = points[(i + 1) % points.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
