@@ -17786,92 +17786,71 @@ button { font-family: var(--font-body); color: var(--text); }
   /* ------------------------------------------------------------------ tile art */
   /* Each boss keeps house differently: stone colours plus scattered floor details. See THEMES below. */
   var TH = null;
+  /* A rough band of ink along a wall: the shadow of the cut, not a soft gradient. */
+  function cutEdge(c, side, px, py, x, y, deep) {
+    var pts = [], n = 6, i;
+    for (i = 0; i <= n; i++) {
+      var d = deep * (0.45 + h2(x, y, 80 + side * 8 + i) * 0.75), t = i / n * T;
+      if (side === 0) pts.push([px + t, py + d]);
+      else if (side === 1) pts.push([px + T - d, py + t]);
+      else if (side === 2) pts.push([px + t, py + T - d]);
+      else pts.push([px + d, py + t]);
+    }
+    if (side === 0) pts.push([px + T, py], [px, py]);
+    else if (side === 1) pts.push([px + T, py + T], [px + T, py]);
+    else if (side === 2) pts.push([px + T, py + T], [px, py + T]);
+    else pts.push([px, py + T], [px, py]);
+    c.fillStyle = TT.woodcut.INK; c.beginPath();
+    pts.forEach(function (p, k) { if (k) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); });
+    c.closePath(); c.fill();
+  }
   function drawFloorTile(c, g, x, y, base, lair) {
-    var px = x * T, py = y * T;
-    c.fillStyle = shade(base, (h2(x, y, 1) - 0.5) * 8);
+    var px = x * T, py = y * T, P = TT.woodcut;
+    c.fillStyle = shade(base, (h2(x, y, 1) - 0.5) * 6 + 5);
     c.fillRect(px, py, T, T);
-    // flagstones: 2x2 slabs with jittered seams
-    c.fillStyle = 'rgba(8,6,10,0.75)';
-    var sx = 14 + Math.floor(h2(x, y, 2) * 5), sy = 13 + Math.floor(h2(x, y, 3) * 6);
-    c.fillRect(px, py, T, 1); c.fillRect(px, py, 1, T);
-    c.fillRect(px + sx, py, 1, sy); c.fillRect(px + Math.floor(h2(x, y, 4) * 10) + 8, py + sy, 1, T - sy);
-    c.fillRect(px, py + sy, T, 1);
-    // slab tone variation
-    for (var k = 0; k < 3; k++) {
-      c.fillStyle = 'rgba(255,240,220,' + (0.015 + h2(x, y, 10 + k) * 0.025) + ')';
-      c.fillRect(px + 1 + (k === 1 ? sx : 0), py + 1 + (k === 2 ? sy : 0), k === 1 ? T - sx - 1 : sx - 1, k === 2 ? T - sy - 1 : sy - 1);
-    }
+    // flagstones cut by hand: seams that wander and stop, never a ruled grid
+    var dark = shade(base, -26), light = shade(base, 24), ang = h2(x, y, 2) * 0.5 - 0.25;
+    if (h2(x, y, 3) < 0.7) P.gouge(c, dark, px - 1, py + 3 + h2(x, y, 4) * 26, T + 2, ang * 0.3, 1.1);
+    if (h2(x, y, 6) < 0.7) P.gouge(c, dark, px + 4 + h2(x, y, 7) * 24, py - 1, T + 2, Math.PI / 2 + ang * 0.3, 1.1);
+    for (var k = 0; k < 3; k++) P.gouge(c, k ? dark : light, px + h2(x, y, 10 + k) * 26, py + h2(x, y, 13 + k) * 28, 5 + h2(x, y, 16 + k) * 10, 1.05 + h2(x, y, 19 + k) * 0.5, 0.8);
     var r = h2(x, y, 5);
-    if (TH && TH.deco) { TH.deco(c, x, y, px, py, r, lair); }
-    else if (r < 0.12) { // crack
-      c.strokeStyle = 'rgba(0,0,0,0.6)'; c.lineWidth = 1; c.beginPath();
-      var cx = px + 4 + h2(x, y, 6) * 22, cy = py + 4 + h2(x, y, 7) * 22;
-      c.moveTo(cx, cy); c.lineTo(cx + 5, cy + 3); c.lineTo(cx + 7, cy + 9); c.stroke();
-    } else if (r < 0.2) { // bone fleck
-      c.fillStyle = 'rgba(170,160,140,0.35)'; c.fillRect(px + 6 + h2(x, y, 8) * 18, py + 6 + h2(x, y, 9) * 18, 3, 1.5);
-    } else if (r < 0.27 && !lair) { // damp moss
-      c.fillStyle = 'rgba(60,80,40,0.22)'; c.beginPath(); c.arc(px + 8 + h2(x, y, 8) * 16, py + 8 + h2(x, y, 9) * 16, 3 + h2(x, y, 11) * 3, 0, 6.283); c.fill();
-    }
-    if (lair) {
-      c.strokeStyle = 'rgba(' + TH.rim + ',0.14)'; c.lineWidth = 1;
-      if (h2(x, y, 12) < 0.35) { c.beginPath(); c.arc(px + 16, py + 16, 6 + h2(x, y, 13) * 6, h2(x, y, 14) * 6, h2(x, y, 14) * 6 + 2); c.stroke(); }
-    }
-    // ambient occlusion along walls
-    var walls = [G.isWall(g, x, y - 1), G.isWall(g, x + 1, y), G.isWall(g, x, y + 1), G.isWall(g, x - 1, y)];
-    var grd;
-    if (walls[0]) { grd = c.createLinearGradient(0, py, 0, py + 9); grd.addColorStop(0, 'rgba(0,0,0,0.65)'); grd.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = grd; c.fillRect(px, py, T, 9); }
-    if (walls[2]) { grd = c.createLinearGradient(0, py + T, 0, py + T - 6); grd.addColorStop(0, 'rgba(0,0,0,0.55)'); grd.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = grd; c.fillRect(px, py + T - 6, T, 6); }
-    if (walls[3]) { grd = c.createLinearGradient(px, 0, px + 7, 0); grd.addColorStop(0, 'rgba(0,0,0,0.55)'); grd.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = grd; c.fillRect(px, py, 7, T); }
-    if (walls[1]) { grd = c.createLinearGradient(px + T, 0, px + T - 7, 0); grd.addColorStop(0, 'rgba(0,0,0,0.55)'); grd.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = grd; c.fillRect(px + T - 7, py, 7, T); }
+    if (TH && TH.deco) TH.deco(c, x, y, px, py, r, lair);
+    if (G.isWall(g, x, y - 1)) cutEdge(c, 0, px, py, x, y, 7);
+    if (G.isWall(g, x + 1, y)) cutEdge(c, 1, px, py, x, y, 5);
+    if (G.isWall(g, x, y + 1)) cutEdge(c, 2, px, py, x, y, 4);
+    if (G.isWall(g, x - 1, y)) cutEdge(c, 3, px, py, x, y, 5);
   }
 
   function drawRockTile(c, g, x, y, bed) {
-    var px = x * T, py = y * T;
-    var exposed = G.adjacentWalkable(g, x, y);
+    var px = x * T, py = y * T, P = TT.woodcut;
+    var exposed = G.adjacentWalkable(g, x, y), i;
     if (bed && !G.isBorder(g, x, y)) {
+      // bedrock: a harder face, cut in big facets
       c.fillStyle = TH.face[0]; c.fillRect(px, py, T, T);
       c.fillStyle = TH.face[1];
       c.beginPath(); c.moveTo(px, py + T); c.lineTo(px + T * 0.3, py + 5 + h2(x, y, 71) * 8); c.lineTo(px + T * 0.62, py + 10 + h2(x, y, 72) * 8); c.lineTo(px + T, py + 3 + h2(x, y, 73) * 10); c.lineTo(px + T, py + T); c.closePath(); c.fill();
-      c.fillStyle = 'rgba(255,240,220,0.13)'; c.fillRect(px + 4 + h2(x, y, 74) * 12, py + 4 + h2(x, y, 75) * 6, 7, 2); c.fillRect(px + 14 + h2(x, y, 76) * 10, py + 16 + h2(x, y, 77) * 6, 5, 2);
-      c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 1; c.strokeRect(px + 0.5, py + 0.5, T - 1, T - 1);
+      for (i = 0; i < 3; i++) P.gouge(c, shade(TH.face[0], 22), px + h2(x, y, 74 + i) * 26, py + h2(x, y, 77 + i) * 26, 8 + h2(x, y, 80 + i) * 8, 0.25, 0.9);
       if (!exposed) return;
     } else if (bed) {
       c.fillStyle = TH.bed; c.fillRect(px, py, T, T);
-      c.strokeStyle = 'rgba(30,26,36,0.6)'; c.lineWidth = 1; c.beginPath();
-      for (var d = -T; d < T; d += 8) { c.moveTo(px + d, py + T); c.lineTo(px + d + T, py); }
-      c.stroke();
       if (!exposed) return;
     } else {
       c.fillStyle = exposed ? TH.rock : TH.deep;
       c.fillRect(px, py, T, T);
-      for (var i = 0; i < (exposed ? 7 : 4); i++) {
-        c.fillStyle = exposed ? 'rgba(70,60,80,' + (0.12 + h2(x, y, 20 + i) * 0.18) + ')' : 'rgba(70,62,82,0.3)';
-        var rx = px + h2(x, y, 30 + i) * (T - 6), ry = py + h2(x, y, 40 + i) * (T - 6), rs = 2 + h2(x, y, 50 + i) * 5;
-        c.beginPath(); c.moveTo(rx, ry + rs); c.lineTo(rx + rs * 0.6, ry); c.lineTo(rx + rs * 1.3, ry + rs * 0.4); c.lineTo(rx + rs, ry + rs * 1.1); c.closePath(); c.fill();
-      }
-      if (h2(x, y, 60) < 0.05 && !exposed) { // faint vein of ore in the deep rock
-        c.fillStyle = 'rgba(160,120,60,0.25)'; c.fillRect(px + 8, py + 12, 2, 2); c.fillRect(px + 18, py + 20, 2, 1);
-      }
+      // the tool's marks: long slanted slivers, all cut the same way, like the rock behind the title
+      var marks = exposed ? 5 : 3, col = exposed ? shade(TH.rock, 16) : shade(TH.deep, 12);
+      for (i = 0; i < marks; i++) P.gouge(c, col, px + h2(x, y, 30 + i) * (T - 4), py + h2(x, y, 40 + i) * (T - 4), 7 + h2(x, y, 50 + i) * 12, 1.05 + h2(x, y, 55 + i) * 0.4, 0.9);
+      if (h2(x, y, 60) < 0.05 && !exposed) P.gouge(c, 'rgba(190,140,60,0.5)', px + 8, py + 12, 10, 0.5, 1);
     }
-    // wall face when the tile below is open: pseudo-3D brickwork catching the light
+    // the wall's face where the floor below is open: a flat band of stone with a bright cut edge along the top
     if (G.isWalkable(g, x, y + 1)) {
-      var fh = 14, fy = py + T - fh;
-      var grd = c.createLinearGradient(0, fy, 0, py + T);
-      grd.addColorStop(0, bed ? '#1e1a22' : TH.face[0]); grd.addColorStop(1, bed ? '#141018' : TH.face[1]);
-      c.fillStyle = grd; c.fillRect(px, fy, T, fh);
-      c.fillStyle = 'rgba(0,0,0,0.45)';
-      c.fillRect(px, fy + 6, T, 1);
-      var off = (x % 2) * 8;
-      for (var b = off; b < T; b += 16) c.fillRect(px + b, fy, 1, 6);
-      for (var b2 = off + 8; b2 < T; b2 += 16) c.fillRect(px + b2, fy + 7, 1, 7);
-      c.fillStyle = 'rgba(255,220,180,0.06)'; c.fillRect(px, fy, T, 1);
+      var fh = 14, fy = py + T - fh, face = bed ? '#1e1a22' : TH.face[0];
+      c.fillStyle = face; c.fillRect(px, fy, T, fh);
+      c.fillStyle = bed ? '#141018' : TH.face[1]; c.fillRect(px, fy + 8, T, fh - 8);
+      for (i = 0; i < 4; i++) P.gouge(c, P.INK, px + h2(x, y, 62 + i) * T, fy + h2(x, y, 66 + i) * (fh - 2), 3 + h2(x, y, 70 + i) * 7, 1.5 + h2(x, y, 90 + i) * 0.2, 0.8);
+      P.gouge(c, shade(face, 34), px - 1, fy + 0.5, T + 2, 0, 0.9);
       if (TH.wall && !bed) TH.wall(c, x, y, px, fy, fh);
     }
-    // crisp rim where rock meets open floor
-    c.fillStyle = 'rgba(90,78,100,0.35)';
-    if (G.isWalkable(g, x, y - 1)) c.fillRect(px, py, T, 1.5);
-    if (G.isWalkable(g, x - 1, y)) c.fillRect(px, py, 1.5, T);
-    if (G.isWalkable(g, x + 1, y)) c.fillRect(px + T - 1.5, py, 1.5, T);
   }
 
   function rebuildTiles(state) {
@@ -17946,7 +17925,7 @@ button { font-family: var(--font-body); color: var(--text); }
     // torches
     state.torches.forEach(function (tc) {
       var s = TT.sprites.get('torch', (frame + tc.uid) % 4);
-      c.drawImage(s, tc.x * T, tc.y * T - 4);
+      c.drawImage(s, tc.x * T, tc.y * T - 4, T, T);
     });
     // traps
     var building = state.phase !== 'raid';
@@ -17956,7 +17935,7 @@ button { font-family: var(--font-body); color: var(--text); }
       if (tp.disabled) c.globalAlpha = 0.35;
       else if (!tp.armed) c.globalAlpha = 0.55;
       else if (!building && tp.cd > 0) c.globalAlpha = 0.7;
-      c.drawImage(s, tp.x * T, tp.y * T);
+      c.drawImage(s, tp.x * T, tp.y * T, T, T);
       c.restore();
       if (tp.disabled) {
         c.strokeStyle = 'rgba(200,190,170,0.7)'; c.lineWidth = 1.5; c.beginPath();
@@ -17975,7 +17954,7 @@ button { font-family: var(--font-body); color: var(--text); }
     // (during the aftermath the raid's own actors are still on stage, so these would be doubles)
     if (state.phase !== 'raid' && !state.raid) {
       state.minions.forEach(function (p) {
-        c.drawImage(TT.sprites.get('post', 0), p.x * T, p.y * T);
+        c.drawImage(TT.sprites.get('post', 0), p.x * T, p.y * T, T, T);
         drawSpriteAt(p.data && p.data.classId ? 'hero_' + p.data.classId : 'minion_' + p.id, p.x + 0.5, p.y + 0.5, Math.floor(t * 2 + p.uid) % 2, 1, false);
       });
       var bp = g.bossPost;
@@ -17990,7 +17969,7 @@ button { font-family: var(--font-body); color: var(--text); }
     ctx.globalAlpha = a;
     state.traps.forEach(function (tp) {
       ctx.globalAlpha = tp.disabled ? a * 0.4 : a;
-      ctx.drawImage(TT.sprites.get('trap_' + tp.id, 0), tp.x * T, tp.y * T);
+      ctx.drawImage(TT.sprites.get('trap_' + tp.id, 0), tp.x * T, tp.y * T, T, T);
     });
     if (building && !state.raid) {
       ctx.globalAlpha = a * 0.8;
@@ -18091,7 +18070,7 @@ button { font-family: var(--font-body); color: var(--text); }
         var dt2 = e.anim.deadT || 0;
         if (dt2 > 30) continue;
         ctx.save(); ctx.globalAlpha = Math.max(0, 1 - dt2 / 30);
-        if (e.kind === 'hero') ctx.drawImage(TT.sprites.get('corpse', 0), e.rx * T - 16, e.ry * T - 18);
+        if (e.kind === 'hero') ctx.drawImage(TT.sprites.get('corpse', 0), e.rx * T - 16, e.ry * T - 18, 32, 32);
         else {
           ctx.fillStyle = 'rgba(170,160,140,0.45)';
           for (var b = 0; b < 5; b++) ctx.fillRect(e.rx * T - 8 + ((e.uid * (b + 3)) % 16), e.ry * T + ((e.uid * (b + 5)) % 6), 3, 1.5);
@@ -18194,8 +18173,8 @@ button { font-family: var(--font-body); color: var(--text); }
       var tool = gh.tool;
       if (ok && (tool.type === 'trap' || tool.type === 'minion' || tool.type === 'torch')) {
         ctx.globalAlpha = 0.55;
-        if (tool.type === 'trap') ctx.drawImage(TT.sprites.get('trap_' + tool.id, 0), x, y);
-        else if (tool.type === 'torch') ctx.drawImage(TT.sprites.get('torch', Math.floor(t * 6) % 4), x, y - 4);
+        if (tool.type === 'trap') ctx.drawImage(TT.sprites.get('trap_' + tool.id, 0), x, y, T, T);
+        else if (tool.type === 'torch') ctx.drawImage(TT.sprites.get('torch', Math.floor(t * 6) % 4), x, y - 4, T, T);
         else drawSpriteAt('minion_' + tool.id, hv.x + 0.5, hv.y + 0.5, 0, 1, false);
         ctx.globalAlpha = 1;
       }
@@ -18285,14 +18264,14 @@ button { font-family: var(--font-body); color: var(--text); }
       if (tileRev !== state.grid.rev || !tileCanvas) rebuildTiles(state);
       var info = { t: t, alpha: alpha, T: T, cam: cam, dt: dt };
       cam.apply(ctx);
-      ctx.imageSmoothingEnabled = false;
+      ctx.imageSmoothingEnabled = true;
       ctx.drawImage(tileCanvas, 0, 0);
       ctx.drawImage(decal, 0, 0);
       runLayers('floor', state, info);
       drawRoute(state, t);
       drawObjects(state, t, info);
       runLayers('objects', state, info);
-      ctx.imageSmoothingEnabled = cam.zoom < 1;
+      ctx.imageSmoothingEnabled = true;
       drawEntities(state, alpha, t, dt);
       runLayers('entities', state, info);
       if (TT.particles) TT.particles.drawWorld(ctx);
@@ -24563,6 +24542,17 @@ button { font-family: var(--font-body); color: var(--text); }
   (function attachStorage() {
     var ls = null;
     try { ls = window.localStorage; } catch (e) { ls = null; }
+    // the desktop app saves to files, for Steam Cloud; bring along anything an older build left in the browser store
+    var files = window.ttDesktop && window.ttDesktop.saves;
+    if (files) {
+      try {
+        if (ls && !files.getItem('moved_from_browser')) {
+          for (var i = 0; i < ls.length; i++) { var k = ls.key(i); if (/^(tinytyrant|tt)/i.test(k) && files.getItem(k) == null) files.setItem(k, ls.getItem(k)); }
+          files.setItem('moved_from_browser', '1');
+        }
+        ls = files;
+      } catch (e3) { /* keep the browser store */ }
+    }
     var ok = false;
     try { ok = !!(ls && TT.store && TT.store.attach(ls)); } catch (e2) { ok = false; }
     // attach() announces itself; without a backend we still tell meta to (re)load from memory
@@ -25956,7 +25946,7 @@ button { font-family: var(--font-body); color: var(--text); }
     var c2 = cv.getContext('2d'), ox = Math.floor((44 - w * px) / 2), oy = Math.floor((44 - h * px) / 2);
     var ax = Math.floor((w - 1) / 2), ay = Math.floor((h - 1) / 2);
     c2.clearRect(0, 0, 44, 44);
-    c2.imageSmoothingEnabled = false;
+    c2.imageSmoothingEnabled = true;
     cells.forEach(function (c) {
       var x = ox + (c.dx + ax) * px, y = oy + (c.dy + ay) * px;
       c2.fillStyle = c.wall ? '#3a2e2a' : '#7a6650';
@@ -28764,6 +28754,8 @@ button { font-family: var(--font-body); color: var(--text); }
     M[name](L, color, r);
   }
   function hash(s) { var h = 7; for (var i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0; return h || 1; }
+  // shared with the map's prints (woodcut_map.js)
+  W.motif = motif; W.MOTIFS = M; W.MOTIF_STAR = star;
 
   /* ------------------------------------------------------------------ spells: a motif on a dark block in the boss's ink */
   var SPELLS = {
@@ -28839,6 +28831,352 @@ button { font-family: var(--font-body); color: var(--text); }
       return cv;
     };
   }
+})(window.TT);
+
+</script>
+<script>/* src/render/woodcut_map.js */
+/*
+ * Tiny Tyrant — src/render/woodcut_map.js
+ * Everything that walks or sits on the map, in the same print as the bosses: flat inks, cut edges, an offset ink shadow and
+ * tool marks. Heroes are one gaunt figure dressed per class; minions and traps are drawn one by one.
+ * Loaded after every other sprite file, so these replace them under the same keys.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined' || !TT.woodcut || !TT.sprites) return;
+  var W = TT.woodcut, INK = W.INK, BONE = W.BONE, EMBER = W.EMBER, GOLD = W.GOLD, TEAL = W.TEAL, SLATE = W.SLATE, RED = W.RED, VIOLET = W.VIOLET, COPPER = W.COPPER;
+  var LEAF = '#9db06c', ICE = '#b9d8dc', OIL = '#6a4a2a', MOSS = '#71864c', DUSK = '#46506a', SOOT = '#2c2520', STEEL = '#8d9aa6';
+  function hash(s) { var h = 7; for (var i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0; return h || 1; }
+  function bar(x0, y0, x1, y1, w) {
+    var dx = x1 - x0, dy = y1 - y0, l = Math.hypot(dx, dy) || 1, nx = -dy / l * w, ny = dx / l * w;
+    return [[x0 + nx, y0 + ny], [x1 + nx, y1 + ny], [x1 - nx, y1 - ny], [x0 - nx, y0 - ny]];
+  }
+
+  /* ------------------------------------------------------------------ heroes, in a 96 x 96 space, feet at y = 90, facing right */
+  var HEROES = {
+    knight: { body: SLATE, hat: 'helm', hand: 'sword', off: 'shield' },
+    rogue: { body: MOSS, hat: 'hood', hand: 'dagger', slim: true },
+    cleric: { body: BONE, robe: true, hat: 'mitre', hand: 'staff', trim: GOLD },
+    mage: { body: EMBER, robe: true, hat: 'wizard', hand: 'staff' },
+    ranger: { body: MOSS, hat: 'hood', hand: 'bow', trim: LEAF },
+    dwarf: { body: COPPER, short: true, hat: 'helm', hand: 'pick', beard: true },
+    inquisitor: { body: RED, robe: true, hat: 'wide', hand: 'sword', trim: BONE },
+    enchanter: { body: ICE, robe: true, hat: 'hood', hand: 'staff', trim: VIOLET },
+    stormcaller: { body: GOLD, robe: true, hat: 'wizard', hand: 'bolt' },
+    frost_warden: { body: ICE, robe: true, hat: 'helm', hand: 'staff', trim: TEAL },
+    diviner: { body: VIOLET, robe: true, hat: 'wizard', hand: 'orb' },
+    duelist: { body: RED, hat: 'feather', hand: 'rapier', slim: true },
+    sentinel: { body: STEEL, hat: 'helm', hand: 'sword', off: 'tower', bulk: 1.12 },
+    hexblade: { body: VIOLET, hat: 'hood', hand: 'sword', trim: BONE },
+    delver: { body: COPPER, hat: 'hood', hand: 'dagger', slim: true, sack: true },
+    artificer: { body: COPPER, hat: 'goggles', hand: 'wrench', trim: GOLD },
+    paladin: { body: BONE, hat: 'helm', hand: 'sword', off: 'shield', trim: GOLD, bulk: 1.08 },
+    beastmaster: { body: OIL, hat: 'fur', hand: 'axe', bulk: 1.05 },
+    bard: { body: RED, hat: 'feather', hand: 'lute', trim: GOLD },
+    monk: { body: EMBER, robe: true, hat: 'bald', hand: 'staff' },
+    ogre: { body: DUSK, hat: 'bald', hand: 'club', bulk: 1.34, skin: LEAF },
+    burglar: { body: SOOT, short: true, hat: 'hood', hand: 'dagger', sack: true, trim: BONE },
+    plague_doctor: { body: SOOT, robe: true, hat: 'beak', hand: 'staff', trim: BONE },
+    alchemist: { body: TEAL, robe: true, hat: 'goggles', hand: 'flask' },
+    templar: { body: BONE, hat: 'helm', hand: 'sword', off: 'tower', trim: RED, bulk: 1.05 },
+    pathfinder: { body: LEAF, hat: 'hood', hand: 'dagger', slim: true },
+    cartographer: { body: COPPER, robe: true, hat: 'wide', hand: 'map' },
+    gravebinder: { body: SLATE, robe: true, hat: 'hood', hand: 'scythe', trim: BONE }
+  };
+  function drawGear(L, kind, hx, hy, r, bob) {
+    if (kind === 'sword') { L(STEEL, bar(hx, hy, hx + 16, hy - 34, 2.6), 0); L(GOLD, bar(hx - 5, hy - 6, hx + 7, hy + 1, 1.8), 0); }
+    else if (kind === 'rapier') { L(BONE, bar(hx, hy, hx + 26, hy - 20, 1.4), 0); L(GOLD, bar(hx + 1, hy - 5, hx + 5, hy + 3, 2), 0); }
+    else if (kind === 'dagger') { L(BONE, bar(hx, hy, hx + 13, hy - 9, 2.2), 0); }
+    else if (kind === 'staff' || kind === 'bolt' || kind === 'orb') {
+      L(kind === 'staff' ? OIL : COPPER, bar(hx + 1, hy + 28, hx + 3, hy - 36, 1.9), 0);
+      var tip = kind === 'bolt' ? GOLD : kind === 'orb' ? ICE : GOLD;
+      L(tip, W.blob(hx + 3, hy - 40, 5.5, 5.5, 8, r), 0);
+    }
+    else if (kind === 'bow') {
+      for (var i = 0; i < 6; i++) { var a = -1.1 + i * 0.37, b = a + 0.37; L(OIL, bar(hx + Math.cos(a) * 21, hy + Math.sin(a) * 26, hx + Math.cos(b) * 21, hy + Math.sin(b) * 26, 1.8), 0); }
+      L(BONE, bar(hx + 9.5, hy - 23, hx + 9.5, hy + 23, 0.6), 0);
+    }
+    else if (kind === 'pick') { L(OIL, bar(hx, hy + 7, hx + 8, hy - 24, 1.9), 0); L(STEEL, [[hx - 4, hy - 26], [hx + 8, hy - 30], [hx + 22, hy - 20], [hx + 9, hy - 24]], 0); }
+    else if (kind === 'axe') { L(OIL, bar(hx, hy + 8, hx + 7, hy - 24, 1.9), 0); L(STEEL, [[hx + 6, hy - 28], [hx + 22, hy - 30], [hx + 20, hy - 12], [hx + 8, hy - 18]], 0); }
+    else if (kind === 'club') { L(OIL, [[hx - 3, hy + 4], [hx + 2, hy + 6], [hx + 16, hy - 34], [hx + 5, hy - 40]], 3); }
+    else if (kind === 'wrench') { L(STEEL, bar(hx, hy + 2, hx + 14, hy - 18, 2.2), 0); L(STEEL, [[hx + 9, hy - 22], [hx + 20, hy - 25], [hx + 18, hy - 15], [hx + 14, hy - 18]], 0); }
+    else if (kind === 'lute') { L(OIL, W.blob(hx + 7, hy + 3, 9, 7, 9, r), 0); L(OIL, bar(hx + 11, hy - 1, hx + 24, hy - 14, 1.4), 0); }
+    else if (kind === 'flask') { L(LEAF, W.blob(hx + 4, hy - 4, 6, 6, 8, r), 0); L(BONE, bar(hx + 4, hy - 10, hx + 4, hy - 15, 1.8), 0); }
+    else if (kind === 'map') { L(BONE, [[hx - 2, hy - 8], [hx + 15, hy - 11], [hx + 16, hy + 3], [hx, hy + 6]], 2, 0.2); }
+    else if (kind === 'scythe') { L(OIL, bar(hx, hy + 28, hx + 5, hy - 34, 1.7), 0); L(BONE, [[hx + 6, hy - 37], [hx - 16, hy - 38], [hx - 26, hy - 22], [hx - 12, hy - 31]], 0); }
+  }
+  function drawHat(L, kind, x, y, s, sp, r) {
+    var col = sp.body;
+    if (kind === 'helm') { L(STEEL, W.blob(x, y - 3 * s, 9.5 * s, 9 * s, 10, r, 0.05), 1); L(INK, [[x + 1, y - 2 * s], [x + 9 * s, y - 3 * s], [x + 9 * s, y], [x + 1, y + 1]], 0); if (sp.trim) L(sp.trim, bar(x - 1, y - 14 * s, x + 1, y - 7 * s, 1.5), 0); }
+    else if (kind === 'hood') { L(col, [[x - 11 * s, y + 10 * s], [x - 9 * s, y - 8 * s], [x + 1, y - 15 * s], [x + 9 * s, y - 7 * s], [x + 10 * s, y + 1]], 2); L(INK, W.blob(x + 4 * s, y + 1, 5 * s, 5 * s, 7, r), 0); L(EMBER, W.blob(x + 6 * s, y, 1.3, 1.3, 5, r), 0); }
+    else if (kind === 'mitre') { L(col, [[x - 7 * s, y - 5 * s], [x, y - 22 * s], [x + 7 * s, y - 5 * s]], 1); L(GOLD, bar(x - 7 * s, y - 6 * s, x + 7 * s, y - 6 * s, 1.5), 0); }
+    else if (kind === 'wizard') { L(col, [[x - 12 * s, y - 4 * s], [x + 12 * s, y - 5 * s], [x + 3 * s, y - 13 * s], [x - 6 * s, y - 30 * s], [x - 2 * s, y - 13 * s]], 2); }
+    else if (kind === 'wide') { L(INK, [[x - 15 * s, y - 5 * s], [x + 15 * s, y - 6 * s], [x + 8 * s, y - 9 * s], [x + 7 * s, y - 17 * s], [x - 7 * s, y - 17 * s], [x - 8 * s, y - 9 * s]], 0); L(sp.trim || GOLD, bar(x - 7 * s, y - 9 * s, x + 7 * s, y - 9 * s, 1.1), 0); }
+    else if (kind === 'feather') { L(col, [[x - 9 * s, y - 5 * s], [x + 10 * s, y - 6 * s], [x + 6 * s, y - 12 * s], [x - 6 * s, y - 11 * s]], 0); L(GOLD, [[x - 7 * s, y - 10 * s], [x - 16 * s, y - 26 * s], [x - 3 * s, y - 13 * s]], 0); }
+    else if (kind === 'goggles') { L(OIL, bar(x - 8 * s, y - 2 * s, x + 8 * s, y - 2 * s, 2), 0); L(GOLD, W.blob(x + 5 * s, y - 2 * s, 3.4 * s, 3.4 * s, 7, r), 0); }
+    else if (kind === 'fur') { L(OIL, W.blob(x, y - 6 * s, 11 * s, 8 * s, 9, r, 0.3), 3); L(BONE, [[x - 8 * s, y - 11 * s], [x - 11 * s, y - 20 * s], [x - 4 * s, y - 13 * s]], 0); }
+    else if (kind === 'beak') { L(SOOT, [[x - 12 * s, y - 6 * s], [x + 9 * s, y - 7 * s], [x + 5 * s, y - 16 * s], [x - 6 * s, y - 15 * s]], 0); L(BONE, [[x + 1, y - 4 * s], [x + 22 * s, y + 5 * s], [x + 1, y + 7 * s]], 1, 0.3); L(INK, W.blob(x + 4 * s, y - 1, 2.2, 2.2, 6, r), 0); }
+  }
+  function heroPrint(c, size, frame, id, sp) {
+    var u = size / 96, r = W.seeded(hash(id)), f = frame % 4;
+    var stride = [-6, 0, 6, 0][f], bob = [0, 1.4, 0, 1.4][f], k = (sp.bulk || 1) * (sp.short ? 0.78 : 1), w = sp.slim ? 0.84 : 1;
+    c.save(); c.scale(u, u);
+    var L = function (col, pts, marks, ang) { W.block(c, col, pts, 0.45, r, marks == null ? 2 : marks, ang); };
+    var cx = 44, ground = 90, tall = Math.min(k, 1.08), hipY = ground - 32 * tall, shoulderY = hipY - 26 * tall + bob, headY = shoulderY - 10 * tall;
+    var skin = sp.skin || BONE;
+    if (sp.sack) L(OIL, W.blob(cx - 13 * w, shoulderY + 7, 10, 12, 9, r), 2);
+    if (sp.off === 'tower') { /* drawn in front */ }
+    // legs
+    if (!sp.robe) {
+      L(sp.bulk ? SOOT : INK === sp.body ? SLATE : SOOT, [[cx - 8 * w * k, hipY], [cx - 1, hipY], [cx - 3 - stride * 0.5, ground], [cx - 11 - stride * 0.5, ground]], 0);
+      L(sp.body === SOOT ? OIL : SOOT, [[cx + 1, hipY], [cx + 8 * w * k, hipY], [cx + 11 + stride * 0.5, ground], [cx + 3 + stride * 0.5, ground]], 0);
+    }
+    // the body: a robe to the floor, or a cut tunic
+    var body = sp.robe
+      ? [[cx - 10 * k, shoulderY], [cx + 10 * k, shoulderY - 1], [cx + 16 * k + stride * 0.2, ground], [cx + 4, ground - 3], [cx - 5, ground], [cx - 16 * k - stride * 0.2, ground - 2]]
+      : [[cx - 12 * w * k, shoulderY], [cx + 12 * w * k, shoulderY - 1], [cx + 9 * w * k, hipY + 5], [cx - 9 * w * k, hipY + 5]];
+    L(sp.body, body, 7, 1.4);
+    if (sp.trim) L(sp.trim, sp.robe ? bar(cx, shoulderY + 2, cx, ground - 4, 1.6) : bar(cx - 8 * k, hipY + 2, cx + 8 * k, hipY + 2, 1.6), 0);
+    // head, small on the shoulders
+    var hs = sp.short ? 0.95 : 1;
+    if (sp.hat !== 'hood' && sp.hat !== 'beak') {
+      L(skin, W.blob(cx + 1, headY, 8.6 * hs, 9.6 * hs, 10, r, 0.07), 0);
+      L(INK, W.blob(cx + 5, headY - 1, 1.9, 2.3, 5, r), 0);
+      L(INK, [[cx + 1, headY + 5], [cx + 8, headY + 4], [cx + 7, headY + 6], [cx + 2, headY + 7]], 0);
+    }
+    if (sp.beard) L(COPPER, [[cx - 6, headY + 3], [cx + 9, headY + 2], [cx + 6, headY + 17], [cx - 2, headY + 15]], 3);
+    drawHat(L, sp.hat, cx + 1, headY, hs, sp, r);
+    // arms and what they hold
+    var hx = cx + 15 * w * k + stride * 0.2, hy = shoulderY + 16 * k;
+    drawGear(L, sp.hand, hx, hy, r, bob);
+    L(sp.robe ? sp.body : (sp.body === SOOT ? OIL : sp.body), bar(cx + 8 * w * k, shoulderY + 3, hx, hy, 3.2 * k), 0);
+    L(skin, W.blob(hx, hy, 3.2, 3.2, 6, r), 0);
+    if (sp.off === 'shield') { L(sp.trim || STEEL, [[cx - 22, shoulderY + 4], [cx - 6, shoulderY + 3], [cx - 7, shoulderY + 22], [cx - 14, shoulderY + 30], [cx - 21, shoulderY + 22]], 3); L(RED, bar(cx - 14, shoulderY + 6, cx - 14, shoulderY + 24, 1.5), 0); }
+    if (sp.off === 'tower') { L(sp.trim || GOLD, [[cx - 24, shoulderY - 2], [cx - 5, shoulderY - 3], [cx - 5, shoulderY + 38], [cx - 24, shoulderY + 38]], 5, 1.2); L(BONE, bar(cx - 14.5, shoulderY + 1, cx - 14.5, shoulderY + 34, 1.5), 0); L(BONE, bar(cx - 21, shoulderY + 12, cx - 8, shoulderY + 12, 1.5), 0); }
+    c.restore();
+  }
+  /* For the store art: one crisp hero at any size, feet on (x, y). */
+  W.hero = function (c, id, x, y, size, frame, flip) {
+    c.save(); c.translate(x, y - size * 90 / 96); if (flip) c.scale(-1, 1); c.translate(-size * 44 / 96, 0);
+    heroPrint(c, size, frame || 0, id, HEROES[id]); c.restore();
+  };
+  Object.keys(HEROES).forEach(function (id) {
+    var big = HEROES[id].bulk > 1.2;
+    TT.sprites.register('hero_' + id, function (c, size, frame) { heroPrint(c, size, frame, id, HEROES[id]); }, { size: 128, frames: 4, worldSize: big ? 50 : 38 });
+  });
+
+  /* ------------------------------------------------------------------ your servants */
+  function figure(c, size, frame, seed, draw) {
+    var u = size / 96, r = W.seeded(seed);
+    c.save(); c.scale(u, u);
+    draw(function (col, pts, marks, ang) { W.block(c, col, pts, 0.45, r, marks == null ? 2 : marks, ang); }, r, frame % 4, [-5, 0, 5, 0][frame % 4], [0, 1.4, 0, 1.4][frame % 4]);
+    c.restore();
+  }
+  var MINIONS = {
+    skeleton: function (L, r, f, s, b) {
+      L(BONE, bar(40, 56, 36 - s * 0.5, 90, 2.4), 0); L(BONE, bar(50, 56, 54 + s * 0.5, 90, 2.4), 0);
+      L(BONE, bar(45, 30 + b, 45, 58, 2.4), 0);
+      for (var i = 0; i < 3; i++) L(BONE, bar(36, 33 + b + i * 7, 54, 33 + b + i * 7, 1.6), 0);
+      L(BONE, bar(36, 32 + b, 28, 54, 2), 0); L(BONE, bar(54, 32 + b, 63, 48 + b, 2), 0);
+      L(STEEL, bar(63, 50 + b, 76, 20 + b, 2.2), 0);
+      L(BONE, W.blob(45, 20 + b, 9, 10, 10, r, 0.06), 0);
+      L(INK, W.blob(42, 19 + b, 2.6, 3, 6, r), 0); L(INK, W.blob(49, 19 + b, 2.6, 3, 6, r), 0);
+      L(INK, bar(41, 27 + b, 50, 27 + b, 0.9), 0);
+    },
+    goblin: function (L, r, f, s, b) {
+      L(SOOT, bar(40, 66, 37 - s * 0.5, 90, 3.5), 0); L(SOOT, bar(50, 66, 53 + s * 0.5, 90, 3.5), 0);
+      L(OIL, [[34, 44 + b], [56, 44 + b], [53, 70], [37, 70]], 4);
+      L(MOSS, W.blob(46, 34 + b, 10, 9, 9, r, 0.08), 1);
+      L(MOSS, [[37, 30 + b], [18, 22 + b], [37, 38 + b]], 0); L(MOSS, [[55, 30 + b], [70, 22 + b], [55, 38 + b]], 0);
+      L(EMBER, W.blob(50, 33 + b, 1.8, 1.8, 5, r), 0); L(BONE, [[46, 40 + b], [56, 39 + b], [52, 44 + b]], 0);
+      L(OIL, bar(56, 52 + b, 72, 40 + b, 2.8), 0); L(OIL, W.blob(74, 38 + b, 5, 7, 7, r), 0);
+    },
+    ghoul: function (L, r, f, s, b) {
+      L(DUSK, bar(38, 62, 30 - s * 0.5, 90, 4), 0); L(DUSK, bar(50, 62, 55 + s * 0.5, 90, 4), 0);
+      L(LEAF, [[30, 32 + b], [56, 26 + b], [58, 62], [34, 66]], 8, 1.4);
+      for (var i = 0; i < 3; i++) L(INK, bar(36, 40 + b + i * 7, 52, 38 + b + i * 7, 1), 0);
+      L(LEAF, bar(53, 32 + b, 70, 56 + b, 3.2), 0); L(BONE, [[68, 56 + b], [78, 60 + b], [68, 62 + b]], 0);
+      L(LEAF, W.blob(52, 22 + b, 9, 9, 9, r, 0.1), 0); L(EMBER, W.blob(56, 20 + b, 2, 2, 5, r), 0);
+      L(INK, [[50, 26 + b], [62, 25 + b], [59, 33 + b], [52, 32 + b]], 0); L(BONE, [[53, 26 + b], [56, 26 + b], [54, 31 + b]], 0);
+    },
+    spider: function (L, r, f, s, b) { spiderBody(L, r, f, 1, VIOLET); },
+    broodling: function (L, r, f, s, b) { spiderBody(L, r, f, 0.72, MOSS); },
+    shade: function (L, r, f, s, b) {
+      var w = [0, 2, 0, -2][f];
+      L(DUSK, [[28, 40], [42, 14 + b], [58, 18 + b], [66, 44], [64 + w, 84], [54, 74], [46 + w, 90], [38, 74], [26 - w, 86]], 9, 1.2);
+      L(INK, W.blob(46, 30 + b, 10, 11, 9, r), 0);
+      L(ICE, W.blob(42, 30 + b, 2.2, 2.6, 6, r), 0); L(ICE, W.blob(51, 30 + b, 2.2, 2.6, 6, r), 0);
+      L(DUSK, [[62, 42], [82, 52 + w], [84, 62], [64, 52]], 0);
+    },
+    risen_thrall: function (L, r, f, s, b) {
+      L(SOOT, bar(40, 60, 37 - s * 0.5, 90, 3.6), 0); L(SOOT, bar(50, 60, 53 + s * 0.5, 90, 3.6), 0);
+      L(EMBER, [[32, 30 + b], [58, 29 + b], [56, 66], [47, 60], [42, 68], [34, 62]], 6, 1.3);
+      L(BONE, W.blob(45, 20 + b, 9, 10, 10, r, 0.06), 1); L(INK, W.blob(42, 19 + b, 2.6, 3, 6, r), 0); L(INK, W.blob(49, 19 + b, 2.6, 3, 6, r), 0);
+      L(BONE, bar(56, 34 + b, 72, 42 + b, 2.6), 0); L(BONE, bar(34, 34 + b, 26, 56, 2.6), 0);
+    },
+    cinder_whelp: function (L, r, f, s, b) {
+      L(EMBER, [[60, 40], [78, 22], [76, 46], [62, 54]], 3);
+      L(RED, [[24, 60 + b], [48, 40 + b], [68, 44], [74, 68], [44, 76]], 8, 0.8);
+      L(SOOT, bar(38, 70, 34 - s * 0.5, 90, 3.6), 0); L(SOOT, bar(60, 70, 62 + s * 0.5, 90, 3.6), 0);
+      L(RED, [[74, 62], [90, 76], [72, 72]], 0);
+      L(RED, [[8, 44 + b], [36, 30 + b], [46, 44 + b], [24, 58 + b]], 2);
+      L(BONE, [[9, 46 + b], [24, 46 + b], [20, 52 + b]], 0); L(GOLD, W.blob(30, 38 + b, 2.3, 2.3, 5, r), 0);
+      L(BONE, [[38, 32 + b], [50, 18 + b], [46, 36 + b]], 0);
+    },
+    hollow_vassal: function (L, r, f, s, b) {
+      L(SLATE, bar(39, 60, 36 - s * 0.5, 90, 4), 0); L(SLATE, bar(51, 60, 54 + s * 0.5, 90, 4), 0);
+      L(SLATE, [[30, 30 + b], [60, 29 + b], [56, 64], [34, 64]], 5, 1.4);
+      L(RED, [[30, 30 + b], [22, 72], [34, 64]], 0);
+      L(SLATE, [[35, 12 + b], [55, 11 + b], [54, 28 + b], [36, 29 + b]], 1); L(INK, [[38, 18 + b], [52, 18 + b], [47, 26 + b], [43, 26 + b]], 0);
+      L(EMBER, W.blob(41, 20 + b, 1.5, 1.5, 5, r), 0); L(EMBER, W.blob(49, 20 + b, 1.5, 1.5, 5, r), 0);
+      L(BONE, bar(62, 62, 74, 14 + b, 2.6), 0); L(GOLD, bar(58, 52, 70, 52, 2), 0);
+    }
+  };
+  function spiderBody(L, r, f, k, col) {
+    var w = [0, 2, 0, -2][f], cx = 48, cy = 66, i;
+    [[-40, -28], [-44, -8], [-42, 12], [-30, 22], [40, -28], [44, -8], [42, 12], [30, 22]].forEach(function (e, n) {
+      var kx = cx + e[0] * 0.55 * k, ky = cy - 24 * k + (n % 2 ? w : -w);
+      L(BONE, bar(cx + e[0] * 0.14 * k, cy - 4 * k, kx, ky, 1.5), 0);
+      L(BONE, bar(kx, ky, cx + e[0] * k, 88, 1.2), 0);
+    });
+    L(col, W.blob(cx, cy + 2 * k, 17 * k, 15 * k, 12, r, 0.08), 5);
+    L(EMBER, [[cx, cy - 5 * k], [cx + 5 * k, cy + 2 * k], [cx, cy + 9 * k], [cx - 5 * k, cy + 2 * k]], 0);
+    L(BONE, W.blob(cx + 13 * k, cy - 10 * k, 7 * k, 6 * k, 8, r), 0);
+    L(RED, W.blob(cx + 16 * k, cy - 11 * k, 1.5, 1.5, 5, r), 0);
+  }
+  Object.keys(MINIONS).forEach(function (id) {
+    TT.sprites.register('minion_' + id, function (c, size, frame) { figure(c, size, frame, hash(id), MINIONS[id]); }, { size: 128, frames: 4, worldSize: 36 });
+  });
+  TT.sprites.register('minion_turncoat', function (c, size, frame) { heroPrint(c, size, frame, 'knight', { body: DUSK, hat: 'helm', hand: 'sword' }); }, { size: 128, frames: 4, worldSize: 38 });
+
+  /* ------------------------------------------------------------------ traps: a marked stone plate on the floor, a set block in the wall.
+     The motif library is shared with the battle screen's icons (art_hud.js); these are the ones only traps need. */
+  var X = W.MOTIFS;
+  function ringOf(L, col, rad, w) { for (var k = 0; k < 12; k++) { var a = k * Math.PI / 6, b = a + Math.PI / 6; L(col, bar(Math.cos(a) * rad, Math.sin(a) * rad, Math.cos(b) * rad, Math.sin(b) * rad, w), 0); } }
+  var EXTRA = {
+    spikes: function (L, c) { [-0.62, 0, 0.62].forEach(function (x, i) { L(c || BONE, [[x - 0.26, 0.82], [x, i === 1 ? -0.9 : -0.5], [x + 0.26, 0.82]], 0); }); },
+    arrow: function (L, c) { L(INK, [[-0.2, -0.9], [0.2, -0.9], [0.2, 0.9], [-0.2, 0.9]], 0); L(c || BONE, bar(-0.75, 0.3, 0.5, -0.3, 0.07), 0); L(c || BONE, [[0.42, -0.5], [0.85, -0.5], [0.6, -0.12]], 0); },
+    grate: function (L, c) { for (var i = 0; i < 4; i++) L(c || STEEL, bar(-0.6 + i * 0.4, -0.85, -0.6 + i * 0.4, 0.85, 0.07), 0); L(c || STEEL, bar(-0.8, -0.3, 0.8, -0.3, 0.07), 0); L(c || STEEL, bar(-0.8, 0.35, 0.8, 0.35, 0.07), 0); },
+    vent: function (L, c, r, seed) { EXTRA.grate(L, SOOT); L(c || EMBER, [[0, -0.95], [0.45, -0.2], [0.34, 0.5], [0, 0.72], [-0.34, 0.5], [-0.45, -0.2]], 1); L(GOLD, [[0, -0.2], [0.2, 0.2], [0, 0.55], [-0.2, 0.2]], 0); },
+    rocks: function (L, c, r) { [[-0.42, -0.42, 0.42], [0.36, -0.2, 0.5], [-0.15, 0.42, 0.5]].forEach(function (b) { L(c || SLATE, W.blob(b[0], b[1], b[2], b[2] * 0.85, 8, r, 0.2), 2); }); },
+    chest: function (L, c) { L(c || OIL, [[-0.82, -0.3], [0.82, -0.32], [0.8, 0.75], [-0.8, 0.75]], 2, 0.1); L(GOLD, bar(-0.82, -0.05, 0.82, -0.05, 0.06), 0); L(BONE, [[-0.55, -0.3], [-0.38, -0.06], [-0.2, -0.3]], 0); L(BONE, [[0.2, -0.3], [0.38, -0.06], [0.55, -0.3]], 0); L(OIL, [[-0.8, -0.32], [-0.6, -0.72], [0.6, -0.74], [0.8, -0.32]], 1, 0.1); },
+    bell: function (L, c, r) { L(c || GOLD, [[-0.2, -0.82], [0.2, -0.82], [0.46, -0.1], [0.74, 0.5], [-0.74, 0.5], [-0.46, -0.1]], 3); L(BONE, W.blob(0, 0.68, 0.18, 0.18, 7, r), 0); },
+    rune: function (L, c) { ringOf(L, c || VIOLET, 0.82, 0.07); L(c || VIOLET, bar(-0.5, -0.5, 0.5, 0.5, 0.07), 0); L(c || VIOLET, bar(0.5, -0.5, -0.5, 0.5, 0.07), 0); },
+    eye: function (L, c, r) { L(BONE, [[-0.9, 0], [-0.3, -0.52], [0.3, -0.52], [0.9, 0], [0.3, 0.52], [-0.3, 0.52]], 0); L(c || VIOLET, W.blob(0, 0, 0.3, 0.3, 8, r), 0); L(INK, W.blob(0, 0, 0.12, 0.12, 6, r), 0); },
+    lantern: function (L, c, r) { L(SOOT, [[-0.42, -0.6], [0.42, -0.6], [0.42, 0.6], [-0.42, 0.6]], 0); L(c || VIOLET, [[-0.3, -0.46], [0.3, -0.46], [0.3, 0.46], [-0.3, 0.46]], 0); L(STEEL, bar(0, -0.6, 0, -0.95, 0.06), 0); L(BONE, W.blob(0, 0, 0.13, 0.2, 6, r), 0); },
+    stone: function (L, c, r) { L(c || SLATE, [[-0.6, 0.85], [-0.5, -0.62], [0, -0.92], [0.5, -0.62], [0.62, 0.85]], 4, 1.3); L(INK, W.blob(-0.05, -0.12, 0.3, 0.4, 7, r), 0); L(BONE, bar(-0.2, 0.42, 0.22, 0.42, 0.05), 0); },
+    pendulum: function (L, c) { L(STEEL, bar(0, -0.95, 0, 0.2, 0.06), 0); L(c || BONE, [[-0.72, 0.1], [0.72, 0.1], [0.4, 0.72], [0, 0.92], [-0.4, 0.72]], 2); },
+    jaws: function (L, c) { for (var i = 0; i < 4; i++) { L(c || SLATE, [[-0.9, -0.9 + i * 0.46], [-0.1, -0.68 + i * 0.46], [-0.9, -0.44 + i * 0.46]], 0); L(c || SLATE, [[0.9, -0.67 + i * 0.46], [0.1, -0.45 + i * 0.46], [0.9, -0.21 + i * 0.46]], 0); } },
+    tar: function (L, c, r) { L(c || SOOT, W.blob(0, 0.2, 0.86, 0.62, 12, r, 0.2), 0); L(BONE, W.blob(-0.25, 0.05, 0.1, 0.1, 6, r), 0); L(BONE, W.blob(0.3, 0.32, 0.07, 0.07, 6, r), 0); L(EMBER, W.blob(0.08, 0.5, 0.05, 0.05, 5, r), 0); },
+    spout: function (L, c) { L(SLATE, [[-0.72, -0.72], [0.5, -0.72], [0.7, -0.22], [0.2, -0.05], [-0.72, -0.1]], 2); L(INK, [[0.14, -0.4], [0.52, -0.4], [0.3, -0.2]], 0); L(c || LEAF, [[0.3, -0.05], [0.56, 0.52], [0.3, 0.92], [0.04, 0.52]], 0); },
+    ballista: function (L, c) { for (var i = 0; i < 6; i++) { var a = 3.5 + i * 0.5, b = a + 0.5; L(OIL, bar(Math.cos(a) * 0.9, 0.4 + Math.sin(a) * 0.72, Math.cos(b) * 0.9, 0.4 + Math.sin(b) * 0.72, 0.08), 0); } L(c || BONE, bar(0, 0.72, 0, -0.95, 0.07), 0); L(c || BONE, [[-0.16, -0.68], [0, -0.98], [0.16, -0.68]], 0); },
+    boulder: function (L, c, r) { L(c || SLATE, W.blob(0, 0, 0.84, 0.84, 12, r, 0.1), 5); L(INK, bar(-0.35, -0.2, 0.05, 0.1, 0.05), 0); L(INK, bar(0.05, 0.1, 0.4, -0.15, 0.05), 0); L(INK, bar(0.05, 0.1, -0.1, 0.5, 0.05), 0); },
+    sluice: function (L, c) { L(OIL, [[-0.7, -0.82], [0.7, -0.82], [0.7, 0.2], [-0.7, 0.2]], 3, 0.1); [-0.46, 0, 0.46].forEach(function (x) { L(c || TEAL, [[x - 0.12, 0.26], [x + 0.12, 0.26], [x + 0.06, 0.95], [x - 0.06, 0.95]], 0); }); },
+    ram: function (L, c) { L(STEEL, bar(-0.28, -0.9, -0.28, 0.1, 0.06), 0); L(STEEL, bar(0.28, -0.9, 0.28, 0.1, 0.06), 0); L(c || SLATE, [[-0.72, 0.08], [0.72, 0.06], [0.72, 0.78], [-0.72, 0.78]], 3, 0.1); [-0.5, 0.5].forEach(function (x) { L(BONE, bar(x - 0.03, 0.28, x + 0.03, 0.28, 0.06), 0); }); },
+    well: function (L, c) { for (var i = 0; i < 20; i++) { var a = i * 0.68, b = (i + 1) * 0.68, ra = 0.08 + i * 0.042, rb = 0.08 + (i + 1) * 0.042; L(c || VIOLET, bar(Math.cos(a) * ra, Math.sin(a) * ra, Math.cos(b) * rb, Math.sin(b) * rb, 0.07), 0); } },
+    brazier: function (L, c) { L(COPPER, [[-0.62, 0.05], [0.62, 0.05], [0.36, 0.6], [-0.36, 0.6]], 2, 0.2); L(SOOT, bar(0, 0.6, 0, 0.92, 0.08), 0); L(c || EMBER, [[0, -0.95], [0.42, -0.42], [0.36, 0.05], [-0.36, 0.05], [-0.42, -0.42]], 1); },
+    mirror: function (L, c, r) { L(c || GOLD, W.blob(0, 0, 0.62, 0.9, 12, r, 0.05), 0); L(ICE, W.blob(0, 0, 0.44, 0.7, 12, r, 0.05), 0); L(BONE, bar(-0.2, -0.28, 0.14, 0.2, 0.05), 0); },
+    idol: function (L, c, r) { L(c || GOLD, [[-0.42, 0.9], [-0.28, -0.05], [0.28, -0.05], [0.42, 0.9]], 3); L(c || GOLD, W.blob(0, -0.42, 0.32, 0.38, 9, r, 0.05), 1); L(INK, bar(-0.16, -0.46, -0.04, -0.46, 0.04), 0); L(INK, bar(0.04, -0.46, 0.16, -0.46, 0.04), 0); },
+    gate: function (L, c) { L(c || STEEL, bar(-0.85, -0.85, 0.85, 0.85, 0.1), 0); L(c || STEEL, bar(0.85, -0.85, -0.85, 0.85, 0.1), 0); L(GOLD, [[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]], 0); },
+    cagebeast: function (L, c, r) { L(INK, [[-0.8, -0.85], [0.8, -0.85], [0.8, 0.85], [-0.8, 0.85]], 0); L(EMBER, W.blob(-0.26, -0.1, 0.1, 0.1, 6, r), 0); L(EMBER, W.blob(0.26, -0.1, 0.1, 0.1, 6, r), 0); EXTRA.grate(L, c || STEEL); },
+    barricade: function (L, c) { L(c || OIL, bar(-0.9, -0.55, 0.9, 0.55, 0.15), 2); L(c || OIL, bar(0.9, -0.55, -0.9, 0.55, 0.15), 2); L(BONE, [[-0.86, -0.72], [-1, -0.92], [-0.66, -0.8]], 0); L(BONE, [[0.86, -0.72], [1, -0.92], [0.66, -0.8]], 0); },
+    magnet: function (L) { L(RED, [[-0.72, -0.82], [-0.28, -0.82], [-0.28, 0.2], [0.28, 0.2], [0.28, -0.82], [0.72, -0.82], [0.72, 0.42], [0.4, 0.82], [-0.4, 0.82], [-0.72, 0.42]], 2); L(BONE, [[-0.72, -0.82], [-0.28, -0.82], [-0.28, -0.46], [-0.72, -0.46]], 0); L(BONE, [[0.28, -0.82], [0.72, -0.82], [0.72, -0.46], [0.28, -0.46]], 0); },
+    mortar: function (L) { L(SOOT, [[-0.5, -0.1], [0.08, -0.72], [0.5, -0.32], [-0.12, 0.34]], 2); L(STEEL, [[-0.75, 0.3], [0.55, 0.3], [0.7, 0.85], [-0.85, 0.85]], 2, 0.1); L(EMBER, bar(0.12, -0.72, 0.5, -0.36, 0.06), 0); },
+    fuse: function (L, c, r) { L(BONE, W.blob(-0.1, 0.22, 0.62, 0.62, 10, r, 0.1), 3); L(INK, W.blob(-0.3, 0.12, 0.13, 0.15, 6, r), 0); L(INK, W.blob(0.1, 0.12, 0.13, 0.15, 6, r), 0); L(OIL, bar(0.22, -0.36, 0.62, -0.76, 0.05), 0); L(EMBER, W.blob(0.68, -0.82, 0.14, 0.14, 6, r), 0); },
+    hands: function (L, c) { [-0.5, 0.5].forEach(function (x) { L(c || DUSK, [[x - 0.2, 0.9], [x + 0.2, 0.9], [x + 0.14, -0.1], [x - 0.14, -0.1]], 0); for (var i = 0; i < 3; i++) L(c || DUSK, bar(x - 0.14 + i * 0.14, -0.1, x - 0.24 + i * 0.24, -0.7, 0.045), 0); }); },
+    saw: function (L, c, r) { L(STEEL, W.MOTIF_STAR(10, 0.95, 0.62), 2); L(INK, W.blob(0, 0, 0.14, 0.14, 7, r), 0); },
+    valve: function (L, c, r) { L(COPPER, bar(-0.9, 0.4, 0.9, 0.4, 0.2), 2); L(STEEL, bar(0, 0.2, 0, -0.32, 0.08), 0); for (var k = 0; k < 8; k++) { var a = k * Math.PI / 4, b = a + Math.PI / 4; L(EMBER, bar(Math.cos(a) * 0.4, -0.5 + Math.sin(a) * 0.3, Math.cos(b) * 0.4, -0.5 + Math.sin(b) * 0.3, 0.06), 0); } },
+    egg: function (L, c, r) { [[-0.36, 0.3], [0.36, 0.3], [0, -0.28]].forEach(function (e) { L(c || BONE, W.blob(e[0], e[1], 0.34, 0.42, 9, r, 0.05), 1); }); },
+    eel: function (L, c) { for (var i = 0; i < 12; i++) { var a = -1 + i * 0.17, b = a + 0.17; L(c || TEAL, bar(a, Math.sin(a * 5) * 0.32, b, Math.sin(b * 5) * 0.32, 0.12), 0); } L(GOLD, [[0.8, -0.06], [1, 0.04], [0.8, 0.2]], 0); },
+    shell: function (L, c) { L(c || BONE, [[-0.8, 0.5], [-0.72, -0.2], [-0.3, -0.76], [0.3, -0.76], [0.72, -0.2], [0.8, 0.5], [0, 0.82]], 0); for (var i = -2; i <= 2; i++) L(INK, bar(i * 0.3, -0.62 + Math.abs(i) * 0.1, i * 0.08, 0.72, 0.025), 0); },
+    scales: function (L, c, r) { L(GOLD, bar(0, -0.9, 0, 0.72, 0.05), 0); L(GOLD, bar(-0.74, -0.58, 0.74, -0.58, 0.05), 0); L(GOLD, W.blob(-0.62, 0, 0.26, 0.16, 7, r), 0); L(GOLD, W.blob(0.62, 0, 0.26, 0.16, 7, r), 0); L(GOLD, bar(-0.4, 0.84, 0.4, 0.84, 0.08), 0); },
+    ledge: function (L) { L(SLATE, [[-0.9, -0.9], [0.9, -0.9], [0.9, -0.1], [0.5, 0.1], [0.1, -0.1], [-0.4, 0.1], [-0.9, -0.1]], 3); L(INK, [[-0.9, 0.1], [0.9, 0.1], [0.9, 0.9], [-0.9, 0.9]], 0); },
+    boards: function (L) { L(OIL, [[-0.82, -0.82], [-0.04, -0.82], [-0.04, 0.82], [-0.82, 0.82]], 3, 1.5); L(OIL, [[0.04, -0.82], [0.82, -0.82], [0.82, 0.82], [0.04, 0.82]], 3, 1.5); [-0.5, 0.5].forEach(function (y) { L(STEEL, bar(-0.82, y, -0.42, y, 0.05), 0); L(STEEL, bar(0.42, y, 0.82, y, 0.05), 0); }); },
+    slab: function (L) { L(INK, [[-0.9, -0.2], [0.9, -0.2], [0.9, 0.2], [-0.9, 0.2]], 0); L(SLATE, [[-0.86, -0.72], [-0.28, -0.72], [-0.28, 0.72], [-0.86, 0.72]], 3); },
+    door: function (L) { L(INK, [[-0.72, -0.9], [0.72, -0.9], [0.72, 0.9], [-0.72, 0.9]], 0); L(OIL, [[-0.7, -0.84], [0.1, -0.68], [0.1, 0.9], [-0.7, 0.84]], 3, 1.4); L(STEEL, bar(-0.7, -0.4, 0.1, -0.35, 0.05), 0); L(STEEL, bar(-0.7, 0.42, 0.1, 0.45, 0.05), 0); L(GOLD, bar(0.2, 0, 0.75, 0, 0.09), 0); },
+    anvil: function (L) { L(SLATE, [[-0.9, -0.4], [0.55, -0.4], [0.9, -0.2], [0.2, 0], [0.2, 0.4], [0.5, 0.8], [-0.5, 0.8], [-0.25, 0.4], [-0.25, 0.02]], 3, 0.1); L(EMBER, [[0.2, -0.62], [0.42, -0.42], [0.06, -0.42]], 0); }
+  };
+  Object.keys(EXTRA).forEach(function (k) { X['t_' + k] = EXTRA[k]; });
+
+  var TRAPS = {
+    spike_pit: ['spikes'], arrow_slit: ['arrow'], flame_vent: ['vent'], collapsing_ceiling: ['rocks'], poison_gas: ['cloud', LEAF], mimic_chest: ['chest'], alarm_bell: ['bell'],
+    frost_glyph: ['shard'], storm_sigil: ['bolt'], binding_circle: ['rune', TEAL], displacement_rune: ['rune', VIOLET], siphon_sigil: ['eye', VIOLET], dread_lantern: ['lantern'], blood_ward: ['drop', RED],
+    shrieking_stone: ['stone'], pendulum_blade: ['pendulum'], grinding_walls: ['jaws'], tar_pit: ['tar'], acid_spout: ['spout'], ballista_turret: ['ballista'], portcullis: ['grate'], rolling_boulder: ['boulder'],
+    flood_sluice: ['sluice'], piston_ram: ['ram'], gravity_well: ['well'], whirling_brazier: ['brazier'], mirror_hall: ['mirror'], gilded_idol: ['idol'], toll_gate: ['gate', GOLD], beast_cage: ['cagebeast'],
+    barricade: ['barricade'], lodestone: ['magnet'], black_mortar: ['mortar'], corpse_fuse: ['fuse'], grasping_hands: ['hands'], soul_siphon: ['wisp'], death_knell: ['bell', SLATE], magma_vent: ['vent', RED],
+    molten_hoard: ['heap'], breath_duct: ['spout', EMBER], crown_spikes: ['crown'], royal_decree: ['eye', GOLD], throne_guard: ['sword'], web_snare: ['web'], venom_drip: ['spout', LEAF], egg_sac: ['egg'],
+    soul_cage: ['cagebeast', VIOLET], coin_trail: ['coins'], tax_collector: ['scales'], gilded_spikes: ['spikes', GOLD], bilge_pump: ['valve'], eel_nest: ['eel'], siren_shell: ['shell'], gear_grinder: ['gear'],
+    steam_valve: ['valve'], sawblade_rail: ['saw'], drop_ledge: ['ledge'], trapdoor: ['boards'], sliding_wall: ['slab'], deadbolt_door: ['door'],
+    mint: ['coin'], forge: ['anvil'], barracks: ['sword'], soul_well: ['well', TEAL], strongroom: ['chest', SLATE]
+  };
+  function plate(c, size, wall, r, u) {
+    if (wall) {
+      W.ink(c, '#3a3230', [[size * 0.04, size * 0.04], [size * 0.96, size * 0.03], [size * 0.97, size * 0.96], [size * 0.03, size * 0.97]], 0, r);
+      for (var i = 0; i < 8; i++) W.gouge(c, INK, r() * size, r() * size, size * (0.12 + r() * 0.18), 0.2 + r() * 0.3, size * 0.012);
+      W.ink(c, INK, [[0, size * 0.92], [size, size * 0.9], [size, size], [0, size]], 0, r);
+    } else {
+      W.ink(c, '#181210', W.cut([[size * 0.05, size * 0.06], [size * 0.95, size * 0.05], [size * 0.95, size * 0.95], [size * 0.05, size * 0.95]], size * 0.03, r), 0, r);
+    }
+  }
+  function aimedPrint(c, size, def, seed) {
+    var r = W.seeded(seed), cells = def.aim.cells, reach = 1;
+    plate(c, size, def.placement === 'wall', r);
+    cells.forEach(function (k) { reach = Math.max(reach, Math.abs(k[0]), Math.abs(k[1])); });
+    var step = size * 0.74 / (reach * 2 + 1), upOnly = !def.aim.fixed && cells.every(function (k) { return k[1] <= 0; });
+    var ox = size / 2, oy = upOnly ? size * 0.5 + reach * step * 0.5 : size / 2;
+    var COL = { fire: EMBER, frost: ICE, lightning: GOLD, poison: LEAF, shadow: VIOLET, physical: BONE };
+    W.ink(c, RED, W.blob(ox, oy, step * 0.34, step * 0.34, 7, r), 0, r);
+    cells.forEach(function (k) {
+      var s = Math.max(size * 0.05, step * (0.26 + 0.2 * (k[2] == null ? 1 : k[2])));
+      W.block(c, COL[def.damageType] || BONE, W.blob(ox + k[0] * step, oy + k[1] * step, s, s, 6, r, 0.2), size / 320, r, 0);
+    });
+  }
+  function trapPrint(key, size) {
+    var id = key;
+    return function (c, sz, frame) {
+      var def = TT.defs.traps[id] || {}, t = TRAPS[id], seed = hash(id);
+      if (def.aim && def.aim.cells) return aimedPrint(c, sz, def, seed);
+      var r = W.seeded(seed), m = t || [{ fire: 'flame', frost: 'shard', lightning: 'bolt', poison: 'drop', shadow: 'wisp' }[def.damageType] || 'spikes', def.damageType === 'poison' ? LEAF : null];
+      plate(c, sz, def.placement === 'wall', r);
+      W.motif(c, X['t_' + m[0]] ? 't_' + m[0] : m[0], sz / 2, sz / 2, sz * 0.36, seed, m[1]);
+    };
+  }
+  /* A trap added later gets a sensible print too: registered when the definitions are known. */
+  function registerTraps() {
+    Object.keys(TT.defs.traps).forEach(function (id) {
+      TT.sprites.register('trap_' + id, trapPrint(id), { size: 96, frames: 1 });
+    });
+  }
+  registerTraps();
+
+  /* ------------------------------------------------------------------ things on the walls and floor */
+  TT.sprites.register('torch', function (c, size, frame) {
+    var r = W.seeded(31), f = frame % 4, u = size / 64, sway = [0, 1.5, 0, -1.5][f] * u;
+    W.block(c, OIL, [[size * 0.43, size * 0.5], [size * 0.57, size * 0.5], [size * 0.55, size * 0.95], [size * 0.45, size * 0.95]], u * 0.5, r, 0);
+    W.block(c, STEEL, [[size * 0.36, size * 0.46], [size * 0.64, size * 0.46], [size * 0.6, size * 0.56], [size * 0.4, size * 0.56]], u * 0.5, r, 0);
+    W.ink(c, EMBER, [[size * 0.5 + sway, size * 0.06], [size * 0.68, size * 0.32], [size * 0.62, size * 0.48], [size * 0.38, size * 0.48], [size * 0.32, size * 0.3]], 0, r);
+    W.ink(c, GOLD, [[size * 0.5 - sway, size * 0.24], [size * 0.59, size * 0.38], [size * 0.55, size * 0.47], [size * 0.45, size * 0.47], [size * 0.41, size * 0.38]], 0, r);
+  }, { size: 64, frames: 4 });
+  TT.sprites.register('treasure', function (c, size, frame) {
+    var r = W.seeded(41), u = size / 96;
+    W.block(c, OIL, [[size * 0.5, size * 0.42], [size * 0.86, size * 0.44], [size * 0.86, size * 0.74], [size * 0.5, size * 0.74]], u * 0.5, r, 3, 0.1);
+    W.ink(c, INK, [[size * 0.5, size * 0.56], [size * 0.86, size * 0.56], [size * 0.86, size * 0.6], [size * 0.5, size * 0.6]], 0, r);
+    W.ink(c, BONE, [[size * 0.64, size * 0.52], [size * 0.72, size * 0.52], [size * 0.72, size * 0.64], [size * 0.64, size * 0.64]], 0, r);
+    W.block(c, GOLD, [[size * 0.06, size * 0.84], [size * 0.22, size * 0.52], [size * 0.38, size * 0.38], [size * 0.56, size * 0.52], [size * 0.8, size * 0.84]], u * 0.5, r, 8, 1.2);
+    for (var i = 0; i < 7; i++) W.ink(c, i % 2 ? BONE : '#e6bb50', W.blob(size * (0.14 + r() * 0.6), size * (0.56 + r() * 0.26), size * 0.04, size * 0.028, 7, r), 0, r);
+  }, { size: 96, frames: 1 });
+  TT.sprites.register('corpse', function (c, size) {
+    var r = W.seeded(51), u = size / 64;
+    W.block(c, '#4b3e36', [[size * 0.14, size * 0.72], [size * 0.42, size * 0.56], [size * 0.86, size * 0.66], [size * 0.84, size * 0.82], [size * 0.2, size * 0.84]], u * 0.5, r, 3, 0.1);
+    W.ink(c, BONE, W.blob(size * 0.24, size * 0.66, size * 0.1, size * 0.1, 8, r), 0, r);
+    W.ink(c, INK, W.blob(size * 0.22, size * 0.65, size * 0.025, size * 0.03, 5, r), 0, r);
+    W.ink(c, RED, W.blob(size * 0.6, size * 0.84, size * 0.24, size * 0.06, 9, r, 0.3), 0, r);
+    W.ink(c, STEEL, bar(size * 0.62, size * 0.6, size * 0.92, size * 0.44, size * 0.018), 0, r);
+  }, { size: 64, frames: 1 });
+  TT.sprites.register('post', function (c, size) {
+    var r = W.seeded(61);
+    W.ink(c, '#1a1411', W.blob(size * 0.5, size * 0.72, size * 0.34, size * 0.14, 10, r, 0.12), 0, r);
+  }, { size: 64, frames: 1 });
 })(window.TT);
 
 </script>
@@ -29313,6 +29651,185 @@ button { font-family: var(--font-body); color: var(--text); }
       }, 180);
     });
   });
+})(window.TT);
+
+</script>
+<script>/* src/ui/gamepad.js */
+/*
+ * Tiny Tyrant — controller support. The game is built for a pointer, so the pad drives a cursor and sends the same mouse
+ * events a real mouse would; nothing else in the game needs to know. It also adds the shortcuts a pad wants.
+ *   Left stick  cursor              A  click (hold to paint)      B  cancel / back
+ *   Right stick move the map        X  turn the piece             Y  start the raid / pause
+ *   Triggers    zoom                LB RB  toolbar tabs, or raid speed
+ *   D-pad       hop between buttons; in a raid, the boss's spells
+ *   Start       menu                Back  show the heroes' route
+ * The cursor hides as soon as a real mouse moves.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined' || typeof navigator === 'undefined') return;
+  var CURSOR_SPEED = 950, PAN_SPEED = 900, DEAD = 0.18;
+  var cur = { x: 0, y: 0, on: false }, el = null, hoverEl = null, hoverBtn = null, downEl = null, prev = {}, last = 0, greeted = false;
+  var CLICKABLE = 'button,.tool,.tb-tab,[role=button],.cq-card,.card,.boss-card,.spell';
+
+  function ensureCursor() {
+    if (el) return;
+    var css = document.createElement('style');
+    css.textContent = '#tt-padcursor{position:fixed;left:0;top:0;width:30px;height:30px;z-index:2147483000;pointer-events:none;display:none;filter:drop-shadow(2px 2px 0 #0e0a09)}' +
+      '#tt-padcursor i{display:block;width:100%;height:100%;background:#e9dcc0;clip-path:polygon(0 0,86% 44%,50% 54%,70% 96%,50% 100%,32% 60%,0 84%)}' +
+      '.pad-hover{outline:3px solid #dd5a18!important;outline-offset:1px}';
+    document.head.appendChild(css);
+    el = document.createElement('div'); el.id = 'tt-padcursor'; el.innerHTML = '<i></i>';
+    document.body.appendChild(el);
+    window.addEventListener('mousemove', function (e) { if (e.isTrusted && cur.on) showCursor(false); }, true);
+  }
+  function showCursor(on) {
+    if (cur.on === on) return;
+    cur.on = on; ensureCursor();
+    el.style.display = on ? 'block' : 'none';
+    document.documentElement.style.cursor = on ? 'none' : '';
+    if (!on) setHoverButton(null);
+  }
+  function setHoverButton(b) {
+    if (hoverBtn === b) return;
+    if (hoverBtn) hoverBtn.classList.remove('pad-hover');
+    hoverBtn = b;
+    if (b) b.classList.add('pad-hover');
+  }
+
+  function mouseOpts(button, buttons) { return { bubbles: true, cancelable: true, view: window, clientX: cur.x, clientY: cur.y, button: button || 0, buttons: buttons || 0 }; }
+  function fire(target, type, button, buttons) {
+    var o = mouseOpts(button, buttons);
+    if (/^pointer/.test(type)) { o.pointerType = 'mouse'; o.pointerId = 1; o.isPrimary = true; target.dispatchEvent(new PointerEvent(type, o)); } else target.dispatchEvent(new MouseEvent(type, o));
+  }
+  function chain(e) { var a = []; while (e && e.nodeType === 1) { a.push(e); e = e.parentElement; } return a; }
+  function under() { return document.elementFromPoint(cur.x, cur.y) || document.body; }
+  function moved(buttons) {
+    var t = under();
+    if (t !== hoverEl) {
+      var oldC = chain(hoverEl), newC = chain(t);
+      if (hoverEl && hoverEl.isConnected) { fire(hoverEl, 'pointerout'); fire(hoverEl, 'mouseout'); }
+      oldC.forEach(function (e) { if (newC.indexOf(e) < 0 && e.isConnected) { e.dispatchEvent(new PointerEvent('pointerleave', Object.assign(mouseOpts(), { bubbles: false, pointerType: 'mouse' }))); e.dispatchEvent(new MouseEvent('mouseleave', Object.assign(mouseOpts(), { bubbles: false }))); } });
+      fire(t, 'pointerover'); fire(t, 'mouseover');
+      newC.forEach(function (e) { if (oldC.indexOf(e) < 0) { e.dispatchEvent(new PointerEvent('pointerenter', Object.assign(mouseOpts(), { bubbles: false, pointerType: 'mouse' }))); e.dispatchEvent(new MouseEvent('mouseenter', Object.assign(mouseOpts(), { bubbles: false }))); } });
+      hoverEl = t;
+      setHoverButton(t.closest ? t.closest(CLICKABLE) : null);
+    }
+    fire(t, 'pointermove', 0, buttons); fire(t, 'mousemove', 0, buttons);
+    el.style.transform = 'translate(' + cur.x + 'px,' + cur.y + 'px)';
+  }
+  function press(button) { var t = under(), bits = button === 2 ? 2 : 1; downEl = t; fire(t, 'pointerdown', button, bits); fire(t, 'mousedown', button, bits); }
+  function release(button) {
+    var t = under();
+    fire(t, 'pointerup', button, 0); fire(t, 'mouseup', button, 0);
+    if (button === 0 && downEl && (t === downEl || downEl.contains(t) || t.contains(downEl))) { var target = t.contains(downEl) ? t : downEl; if (target.click) target.click(); else fire(target, 'click'); }
+    if (button === 2) fire(t, 'contextmenu', 2, 0);
+    downEl = null;
+  }
+  function key(k) {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true }));
+  }
+  function visible(e) {
+    var b = e.getBoundingClientRect();
+    if (b.width < 4 || b.height < 4 || b.right < 0 || b.bottom < 0 || b.left > innerWidth || b.top > innerHeight) return null;
+    var cx = b.left + b.width / 2, cy = b.top + b.height / 2, top = document.elementFromPoint(cx, cy);
+    if (!top || !(top === e || e.contains(top) || top.contains(e))) return null;
+    return { e: e, x: cx, y: cy };
+  }
+  function buttonsNow() { return [].slice.call(document.querySelectorAll(CLICKABLE)).map(visible).filter(Boolean); }
+  /* Hop to the nearest button in a direction: far quicker than steering a stick across a menu. */
+  function hop(dx, dy) {
+    var best = null, bestScore = 1e9;
+    buttonsNow().forEach(function (b) {
+      var vx = b.x - cur.x, vy = b.y - cur.y, along = vx * dx + vy * dy, across = Math.abs(vx * dy) + Math.abs(vy * dx);
+      if (along < 6) return;
+      var score = along + across * 2.5;
+      if (score < bestScore) { bestScore = score; best = b; }
+    });
+    if (best) { cur.x = best.x; cur.y = best.y; moved(0); return true; }
+    return false;
+  }
+  function backOut() {
+    var ui = TT.ui;
+    if (!ui.screens.isOpen()) { press(2); release(2); return; }
+    var found = buttonsNow().filter(function (b) { return /^(back|close|cancel|not now|leave|done)\b/i.test((b.e.textContent || '').trim()); })[0];
+    if (found) found.e.click(); else key('Escape');
+  }
+  function inField() { return !!(TT.state && TT.ui && !TT.ui.screens.isOpen()); }
+  function tabStep(n) {
+    var tabs = [].slice.call(document.querySelectorAll('#toolbar .tb-tab'));
+    if (!tabs.length) return;
+    var i = tabs.findIndex(function (t) { return t.classList.contains('on'); });
+    tabs[(i + n + tabs.length) % tabs.length].click();
+  }
+  function speedStep(n) {
+    var S = [1, 2, 4], i = S.indexOf(TT.main.speed);
+    TT.main.setSpeed(S[Math.max(0, Math.min(S.length - 1, (i < 0 ? 0 : i) + n))]);
+  }
+  function rotate() {
+    var t = TT.ui.build.tool;
+    if (t && (t.type === 'prefab' || (t.type === 'trap' && TT.aim.isAimed(TT.defs.traps[t.id])))) TT.ui.prefabs.rotate(1);
+  }
+  function onPress(i) {
+    var st = TT.state, raid = inField() && st.phase === 'raid', build = inField() && st.phase === 'build';
+    if (i === 0) press(0);
+    else if (i === 1) backOut();
+    else if (i === 2) { if (build) rotate(); }
+    else if (i === 3) { if (build) key('Enter'); else if (raid) key(' '); }
+    else if (i === 4 || i === 5) { var n = i === 4 ? -1 : 1; if (build) tabStep(n); else if (raid) speedStep(n); }
+    else if (i === 8) { if (inField()) key('v'); }
+    else if (i === 9) key('Escape');
+    else if (i >= 12 && i <= 15) {
+      if (raid) { TT.ui.hud.useSpell({ 12: 0, 15: 1, 13: 2, 14: 3 }[i]); return; }
+      hop(i === 14 ? -1 : i === 15 ? 1 : 0, i === 12 ? -1 : i === 13 ? 1 : 0);
+    }
+  }
+  function onRelease(i) { if (i === 0) release(0); }
+  function curve(v) { var a = Math.abs(v); if (a < DEAD) return 0; var k = (a - DEAD) / (1 - DEAD); return Math.sign(v) * k * k; }
+
+  function tick(now) {
+    requestAnimationFrame(tick);
+    var dt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
+    var pads = navigator.getGamepads ? navigator.getGamepads() : null, pad = null;
+    if (pads) for (var p = 0; p < pads.length; p++) if (pads[p] && pads[p].connected !== false) { pad = pads[p]; break; }
+    if (!pad || !TT.ui || !TT.ui.screens) return;
+    var ax = pad.axes || [], bt = pad.buttons || [], any = false, i;
+    var lx = curve(ax[0] || 0), ly = curve(ax[1] || 0), rx = curve(ax[2] || 0), ry = curve(ax[3] || 0);
+    if (lx || ly || rx || ry) any = true;
+    for (i = 0; i < bt.length; i++) if (bt[i] && bt[i].pressed) any = true;
+    if (any && !cur.on) {
+      if (!cur.x && !cur.y) { cur.x = innerWidth / 2; cur.y = innerHeight / 2; }
+      showCursor(true); moved(0);
+      if (!greeted) { greeted = true; prev = {}; if (TT.ui.toast) TT.ui.toast('Controller on: A click, B back, X turn, Y start raid'); }
+    }
+    if (!cur.on) return;
+    var held = !!(bt[0] && bt[0].pressed);
+    if (lx || ly) {
+      cur.x = Math.max(0, Math.min(innerWidth - 1, cur.x + lx * CURSOR_SPEED * dt));
+      cur.y = Math.max(0, Math.min(innerHeight - 1, cur.y + ly * CURSOR_SPEED * dt));
+      moved(held ? 1 : 0);
+    }
+    if (rx || ry) {
+      if (inField()) { TT.camera.pan(-rx * PAN_SPEED * dt, -ry * PAN_SPEED * dt); moved(held ? 1 : 0); }
+      else {
+        var box = under();
+        while (box && box !== document.body && !(box.scrollHeight > box.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+        if (box && box !== document.body) box.scrollTop += ry * PAN_SPEED * dt;
+      }
+    }
+    var zoom = ((bt[7] && bt[7].value) || 0) - ((bt[6] && bt[6].value) || 0);
+    if (inField() && Math.abs(zoom) > 0.08) TT.camera.zoomAt(Math.pow(2.2, zoom * dt), cur.x, cur.y);
+    for (i = 0; i < bt.length; i++) {
+      if (i === 6 || i === 7) continue;
+      var on = !!(bt[i] && bt[i].pressed);
+      if (on && !prev[i]) onPress(i);
+      else if (!on && prev[i]) onRelease(i);
+      prev[i] = on;
+    }
+  }
+  TT.gamepad = { cursor: cur };
+  requestAnimationFrame(tick);
 })(window.TT);
 
 </script>
