@@ -19129,6 +19129,7 @@ button { font-family: var(--font-body); color: var(--text); }
     // traps
     var building = state.phase !== 'raid';
     state.traps.forEach(function (tp) {
+      if (!building && TT.motion && TT.motion.away(state, tp)) return;   // its boulder or cart is out rolling
       var s = TT.sprites.get('trap_' + tp.id, Math.floor(t * 3 + tp.uid) % 4);
       c.save();
       if (tp.disabled) c.globalAlpha = 0.35;
@@ -20392,6 +20393,255 @@ button { font-family: var(--font-body); color: var(--text); }
       ctx.restore();
     });
   });
+})(window.TT);
+
+</script>
+<script>/* src/render/motion.js */
+/*
+ * Tiny Tyrant — src/render/motion.js
+ * The moving parts of traps that move: when one fires, its blade, cart, spear or slab physically travels
+ * across the tiles it hits, instead of the tiles only flashing.
+ *   aimed traps (src/content/aimed.js)   read trap.data.r.flashT / .tiles and trap.dir
+ *   proximity and step traps             remembered from 'trapTrigger' (time and victim tile)
+ * Drawn in raid time, so pausing freezes them. Pure render: nothing here touches the sim.
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined' || !TT.render || !TT.render.addLayer) return;
+
+  var INK = '#0e0a09', STEEL = '#9a9ca2', DARK = '#4a4650', BONE = '#ddd2b8', WOOD = '#6b4a30', ORE = '#7a6a58', RUST = '#8a4a2a';
+  var fired = {};   // trap uid -> {t, vx, vy} for non-aimed traps
+
+  TT.events.on('trapTrigger', function (e) {
+    if (!e || !e.trap || !e.state || !e.state.raid) return;
+    var v = e.victim;
+    fired[e.trap.uid] = { t: e.state.raid.t, vx: v ? (v.tx != null ? v.tx : Math.floor(v.x)) : e.trap.x, vy: v ? (v.ty != null ? v.ty : Math.floor(v.y)) : e.trap.y };
+  });
+  TT.events.on('raidStart', function () { fired = {}; });
+
+  /* a filled shape with a heavy woodcut outline, in tile units */
+  function shape(c, T, pts, fill, w) {
+    c.beginPath(); c.moveTo(pts[0][0] * T, pts[0][1] * T);
+    for (var i = 1; i < pts.length; i++) c.lineTo(pts[i][0] * T, pts[i][1] * T);
+    c.closePath();
+    c.lineJoin = 'round'; c.lineWidth = w || Math.max(1.5, T * 0.07); c.strokeStyle = INK; c.stroke();
+    c.fillStyle = fill; c.fill();
+  }
+  function rod(c, T, x0, y0, x1, y1, col, w) {
+    c.lineCap = 'round';
+    c.strokeStyle = INK; c.lineWidth = (w + 0.08) * T; c.beginPath(); c.moveTo(x0 * T, y0 * T); c.lineTo(x1 * T, y1 * T); c.stroke();
+    c.strokeStyle = col; c.lineWidth = w * T; c.stroke();
+  }
+  function disc(c, T, x, y, r, col) {
+    c.beginPath(); c.arc(x * T, y * T, r * T, 0, Math.PI * 2);
+    c.lineWidth = Math.max(1.5, T * 0.07); c.strokeStyle = INK; c.stroke(); c.fillStyle = col; c.fill();
+  }
+  /* a crescent blade, edge facing +x, at the origin */
+  function crescent(c, T, len, col) {
+    shape(c, T, [[0, -len * 0.5], [len * 0.42, -len * 0.3], [len * 0.55, 0], [len * 0.42, len * 0.3], [0, len * 0.5], [len * 0.22, 0]], col || BONE);
+  }
+  function saw(c, T, r, spin) {
+    var pts = [];
+    for (var i = 0; i < 16; i++) { var a = spin + i * Math.PI / 8, rr = i % 2 ? r * 0.72 : r; pts.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
+    shape(c, T, pts, STEEL);
+    disc(c, T, 0, 0, r * 0.25, DARK);
+  }
+  function ease(k) { return k < 0 ? 0 : k > 1 ? 1 : 1 - Math.pow(1 - k, 3); }
+  function bump(k) { return k <= 0 || k >= 1 ? 0 : Math.sin(Math.PI * k); }
+
+  /* how far forward an aimed trap's live tiles reach, in its own north-facing frame */
+  function reach(tp, r) {
+    var d = tp.dir || 0, best = 0;
+    (r.tiles || []).forEach(function (t) {
+      var x = t.x - tp.x, y = t.y - tp.y;
+      for (var i = 0; i < (4 - d) % 4; i++) { var q = x; x = -y; y = q; }
+      best = Math.max(best, -y);
+    });
+    return best;
+  }
+
+  /* how far each diagonal of an X reaches: SE, SW, NW, NE (the order the arms are drawn in) */
+  function diag(tp, r) {
+    var out = [0, 0, 0, 0], O = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+    (r.tiles || []).forEach(function (t) {
+      var dx = t.x - tp.x, dy = t.y - tp.y;
+      O.forEach(function (o, i) { if (dx * o[0] > 0 && dy * o[1] > 0) out[i] = Math.max(out[i], Math.abs(dx)); });
+    });
+    return out;
+  }
+
+  /* each draws at the trap's centre in tile units, facing north (-y); k runs 0..1 over the animation */
+  var AIMED = {
+    mine_cart: { d: 0.75, draw: function (c, T, k, n) {
+      var y = -(0.2 + (n + 0.2) * k * k);   // starts slow, gathers speed
+      c.globalAlpha = k > 0.85 ? (1 - k) / 0.15 : 1;
+      c.translate(0, y * T);
+      shape(c, T, [[-0.36, -0.42], [0.36, -0.42], [0.3, 0.34], [-0.3, 0.34]], WOOD);
+      shape(c, T, [[-0.26, -0.5], [0.04, -0.62], [0.28, -0.46], [0.1, -0.3], [-0.2, -0.32]], ORE);
+      rod(c, T, -0.32, -0.1, 0.32, -0.1, RUST, 0.05); rod(c, T, -0.32, 0.14, 0.32, 0.14, RUST, 0.05);
+      var sp = -y * 4;
+      [[-0.4, -0.24], [0.4, -0.24], [-0.4, 0.2], [0.4, 0.2]].forEach(function (p) {
+        disc(c, T, p[0], p[1], 0.11, DARK);
+        rod(c, T, p[0], p[1] - 0.09 * Math.cos(sp), p[0], p[1] + 0.09 * Math.cos(sp), STEEL, 0.03);
+      });
+    } },
+    spear_thrust: { d: 0.4, draw: function (c, T, k, n) { spear(c, T, 0.3 + n * bump(k)); } },
+    harpoon: { d: 0.55, draw: function (c, T, k, n) {
+      var out = 0.3 + n * ease(k / 0.35);
+      c.globalAlpha = k > 0.8 ? (1 - k) / 0.2 : 1;
+      c.strokeStyle = '#b8a888'; c.lineWidth = Math.max(1, T * 0.04); c.setLineDash([T * 0.12, T * 0.08]);
+      c.beginPath(); c.moveTo(0, 0); c.lineTo(0, -out * T); c.stroke(); c.setLineDash([]);
+      c.translate(0, -out * T);
+      rod(c, T, 0, 0.5, 0, 0, WOOD, 0.08);
+      shape(c, T, [[0, -0.32], [0.17, 0.05], [0.06, 0], [0, 0.08], [-0.06, 0], [-0.17, 0.05]], STEEL);
+    } },
+    scythe_row: { d: 0.45, draw: function (c, T, k) {
+      // three blades on one axle, swinging across the row two tiles out
+      rod(c, T, -1.45, -1.25, 1.45, -1.25, DARK, 0.09);
+      var a = -1.15 + 2.3 * ease(k);
+      c.globalAlpha = k > 0.75 ? 0.3 + 0.7 * (1 - k) / 0.25 : 1;
+      [-1, 0, 1].forEach(function (x) {
+        c.save(); c.translate(x * T, -1.25 * T); c.rotate(-Math.PI / 2 + a);
+        rod(c, T, 0, 0, 0.7, 0, WOOD, 0.07);
+        c.translate(0.7 * T, 0); c.rotate(Math.PI / 2); crescent(c, T, 0.9);
+        c.restore();
+      });
+    } },
+    flank_scythes: { d: 0.5, draw: function (c, T, k) {
+      // two blades fold out sideways, sweep, and fold back
+      var len = 0.3 + 1.95 * bump(Math.min(1, k * 1.15)), wob = Math.sin(k * Math.PI * 2) * 0.35;
+      disc(c, T, 0, 0, 0.18, DARK);
+      [-1, 1].forEach(function (s) {
+        c.save(); c.rotate(wob * s + (s < 0 ? Math.PI : 0));
+        rod(c, T, 0, 0, len, 0, WOOD, 0.06);
+        c.translate(len * T, 0); c.rotate(-Math.PI / 2); crescent(c, T, 0.66);
+        c.restore();
+      });
+    } },
+    cross_blades: { d: 0.45, draw: function (c, T, k, n, arms) {
+      var sp = k * 0.3;
+      disc(c, T, 0, 0, 0.2, DARK);
+      for (var i = 0; i < 4; i++) {
+        // each arm only as far as its own diagonal is open
+        var len = 0.25 + ((arms ? arms[i] : 2) * Math.SQRT2 - 0.05) * bump(k);
+        if (arms && !arms[i]) continue;
+        c.save(); c.rotate(Math.PI / 4 + i * Math.PI / 2 + sp);
+        rod(c, T, 0, 0, len, 0, DARK, 0.05);
+        c.translate(len * T, 0);
+        shape(c, T, [[-0.3, -0.12], [0.22, 0], [-0.3, 0.12]], STEEL);
+        c.restore();
+      }
+    } },
+    slant_bolt: { d: 0.4, draw: function (c, T, k, n) {
+      c.rotate(Math.PI / 4);
+      var out = 0.3 + n * Math.SQRT2 * ease(k / 0.7);
+      c.globalAlpha = k > 0.75 ? (1 - k) / 0.25 : 1;
+      c.translate(0, -out * T);
+      rod(c, T, 0, 0.55, 0, 0, WOOD, 0.06);
+      shape(c, T, [[0, -0.25], [0.12, 0.04], [-0.12, 0.04]], STEEL);
+      shape(c, T, [[0, 0.45], [0.14, 0.62], [-0.14, 0.62]], BONE);
+    } }
+  };
+  function spear(c, T, out) {
+    rod(c, T, 0, 0.1, 0, -out + 0.2, WOOD, 0.09);
+    c.save(); c.translate(0, -out * T);
+    shape(c, T, [[0, -0.3], [0.13, 0.05], [0.05, 0.22], [-0.05, 0.22], [-0.13, 0.05]], STEEL);
+    c.restore();
+  }
+
+  /* these fire at a victim beside them; drawn toward that victim */
+  var STRUCK = {
+    pendulum_blade: { d: 0.7, draw: function (c, T, k) {
+      // hung on the wall's face, it swings across in front, and settles
+      var a = Math.sin(k * Math.PI * 2.2) * 1.1 * (1 - k * 0.6);
+      c.translate(0, 0.1 * T); c.rotate(a);
+      rod(c, T, 0, 0, 0, -1.1, DARK, 0.07);
+      c.translate(0, -1.1 * T); c.rotate(-Math.PI / 2); crescent(c, T, 1.1);
+    } },
+    piston_ram: { d: 0.5, draw: function (c, T, k) {
+      var out = 0.15 + 0.85 * (k < 0.2 ? ease(k / 0.2) : 1 - ease((k - 0.2) / 0.8));
+      rod(c, T, -0.18, 0, -0.18, -out + 0.1, STEEL, 0.07); rod(c, T, 0.18, 0, 0.18, -out + 0.1, STEEL, 0.07);
+      shape(c, T, [[-0.46, -out - 0.12], [0.46, -out - 0.12], [0.46, -out + 0.14], [-0.46, -out + 0.14]], DARK);
+      rod(c, T, -0.36, -out - 0.02, 0.36, -out - 0.02, '#6a6670', 0.04);
+    } },
+    sawblade_rail: { d: 0.6, draw: function (c, T, k) {
+      // the saw runs along the wall, past the victim, and back
+      var x = Math.sin((k - 0.5) * Math.PI) * 1.4;
+      rod(c, T, -1.6, -0.42, 1.6, -0.42, DARK, 0.05);
+      c.translate(x * T, -0.5 * T);
+      saw(c, T, 0.34, k * 18);
+    } },
+    grinding_walls: { d: 0.9, floor: true, draw: function (c, T, k) {
+      // two slabs ride in from the sides, meet, and part slowly
+      var shut = k < 0.18 ? ease(k / 0.18) : k < 0.35 ? 1 : 1 - ease((k - 0.35) / 0.65), gap = 0.5 - 0.42 * shut;
+      [-1, 1].forEach(function (s) {
+        var x0 = s * (gap + 0.04), x1 = s * (gap + 0.95);
+        shape(c, T, [[x0, -0.5], [x1, -0.5], [x1, 0.5], [x0, 0.5]], '#5a4e44');
+        rod(c, T, (x0 + x1) / 2, -0.5, (x0 + x1) / 2, 0.5, '#4a4038', 0.04);
+        for (var i = 0; i < 4; i++) {
+          var y = -0.38 + i * 0.25;
+          shape(c, T, [[x0, y], [x0 - s * 0.13, y + 0.09], [x0, y + 0.18]], STEEL, 1);
+        }
+      });
+    } }
+  };
+
+  /* which way a wall-mounted trap faces when it strikes: toward open floor, on the side nearest its victim */
+  var D4 = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+  function forward(state, tp, f) {
+    var g = state.grid, dx = f.vx - tp.x, dy = f.vy - tp.y, best = -1, bs = -1e9;
+    D4.forEach(function (o, i) {
+      if (!TT.grid.isWalkable(g, tp.x + o[0], tp.y + o[1])) return;
+      var s = o[0] * dx + o[1] * dy;
+      if (s > bs) { bs = s; best = i; }
+    });
+    if (best >= 0) return best;
+    if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 1 : 3;
+    return dy > 0 ? 2 : 0;
+  }
+  /* grinding walls close across the corridor: along whichever axis has wall on both sides */
+  function slabTurn(state, tp) {
+    var g = state.grid, W = function (x, y) { return !TT.grid.isWalkable(g, x, y); };
+    if (W(tp.x - 1, tp.y) && W(tp.x + 1, tp.y)) return 0;
+    if (W(tp.x, tp.y - 1) && W(tp.x, tp.y + 1)) return 1;
+    return 0;
+  }
+
+  TT.render.addLayer('entities', function (ctx, state, info) {
+    if (!state || state.phase !== 'raid' || !state.raid) return;
+    var T = info.T, now = state.raid.t;
+    state.traps.forEach(function (tp) {
+      var spec, age, turn, k, n = 0;
+      var r = tp.data && tp.data.r;
+      if (AIMED[tp.id]) {
+        spec = AIMED[tp.id];
+        if (!r || r.flashT == null || !r.tiles || !r.tiles.length) return;
+        age = now - r.flashT; turn = TT.defs.traps[tp.id].aim.fixed ? 0 : tp.dir || 0; n = reach(tp, r);
+      } else if (STRUCK[tp.id]) {
+        spec = STRUCK[tp.id];
+        var f = fired[tp.uid];
+        if (!f) return;
+        age = now - f.t; turn = spec.floor ? slabTurn(state, tp) : forward(state, tp, f);
+      } else return;
+      if (age < 0 || age > spec.d) return;
+      k = age / spec.d;
+      ctx.save();
+      ctx.translate((tp.x + 0.5) * T, (tp.y + 0.5) * T);
+      ctx.rotate(turn * Math.PI / 2);
+      try { spec.draw(ctx, T, k, n, tp.id === 'cross_blades' ? diag(tp, r) : null); } finally { ctx.restore(); }
+    });
+  });
+
+  /* is the trap's moving part away from its spot right now (so its resting sprite is not drawn twice)? */
+  function away(state, tp) {
+    var r = tp.data && tp.data.r;
+    if (!r || !state.raid) return false;
+    if (tp.id === 'rolling_boulder') return !!r.rolling;
+    if (tp.id === 'mine_cart') return r.flashT != null && state.raid.t - r.flashT >= 0 && state.raid.t - r.flashT < AIMED.mine_cart.d;
+    return false;
+  }
+
+  TT.motion = { AIMED: AIMED, STRUCK: STRUCK, away: away };
 })(window.TT);
 
 </script>
