@@ -30141,6 +30141,353 @@ button { font-family: var(--font-body); color: var(--text); }
 })(window.TT);
 
 </script>
+<script>/* src/ui/guide.js */
+/*
+ * Tiny Tyrant — src/ui/guide.js
+ * The picture guide: how the game works, shown rather than told. Seven little animated woodcut scenes, each with
+ * a caption of a few words. It plays before a new player's first night, and again from How to Play.
+ * TT.guide API: show(onDone), isOpen()
+ */
+(function (TT) {
+  'use strict';
+  if (typeof document === 'undefined') return;
+  var ui = TT.ui;
+  var W = 600, H = 300, TS = 50, ROW = 3;   // the scene: 12 x 6 tiles, the corridor on row 3
+  var INK = '#0e0a09', BONE = '#e9dcc0', EMBER = '#dd5a18', GOLD = '#e6bb50', FLOOR = '#4a3f36', WALL = '#191310';
+
+  var CSS = [
+    '#tt-guide{position:absolute;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:radial-gradient(ellipse at 50% 45%,#2a1f19 0%,#0e0a09 75%);padding:12px;box-sizing:border-box}',
+    '#tt-guide .cap{font-family:var(--font-display);font-size:clamp(24px,4.4vw,40px);color:#f3e6c8;text-align:center;letter-spacing:.04em;text-shadow:0 3px 0 #000,0 0 22px rgba(221,90,24,.45);height:1.25em;line-height:1.25em;white-space:nowrap}',
+    '#tt-guide canvas{width:min(600px,94vw);height:auto;aspect-ratio:2/1;border:3px solid #0e0a09;outline:2px solid #6b4a30;box-shadow:0 10px 40px rgba(0,0,0,.7);background:#191310}',
+    '#tt-guide .dots{display:flex;gap:10px}',
+    '#tt-guide .dot{width:12px;height:12px;border-radius:50%;background:#4a3f36;border:2px solid #0e0a09}',
+    '#tt-guide .dot.on{background:#e6bb50}',
+    '#tt-guide .nav{display:flex;gap:14px;align-items:center}',
+    '#tt-guide .nav button{min-width:64px;height:56px;font-size:26px;cursor:pointer;background:#e9dcc0;color:#0e0a09;border:3px solid #0e0a09;box-shadow:4px 4px 0 #0e0a09;font-family:var(--font-display);font-weight:700}',
+    '#tt-guide .nav button.go{min-width:150px;background:#dd5a18;color:#fff4e0}',
+    '#tt-guide .nav button:disabled{opacity:.3;cursor:default}',
+    '#tt-guide .skip{position:absolute;top:14px;right:16px;background:none;border:1px solid #6b5a48;color:#b8a888;font-size:14px;padding:8px 14px;cursor:pointer;font-family:var(--font-body)}'
+  ].join('');
+
+  /* ------------------------------------------------------------------ drawing helpers */
+  function rnd(n) { var s = n >>> 0 || 1; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+  function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
+  function seg(t, a, b) { return clamp((t - a) / (b - a), 0, 1); }   // 0..1 across [a, b]
+  function ease(k) { return k * k * (3 - 2 * k); }
+  function lerp(a, b, k) { return a + (b - a) * k; }
+  function tx(c) { return c * TS + TS / 2; }
+  var ROWY = ROW * TS + TS / 2;
+
+  /* the dungeon behind a scene, printed once: floor where open is true, rough stone everywhere else */
+  function backdrop(open, glow) {
+    var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    var c = cv.getContext('2d'), r = rnd(4111);
+    c.fillStyle = WALL; c.fillRect(0, 0, W, H);
+    for (var y = 0; y < H; y += 22) for (var x = (y / 22) % 2 ? -22 : 0; x < W; x += 44) {
+      c.fillStyle = ['#211a16', '#1d1713', '#251d18'][Math.floor(r() * 3)];
+      c.fillRect(x + 2, y + 2, 40, 18);
+    }
+    for (var row = 0; row < 6; row++) for (var col = 0; col < 12; col++) {
+      if (!open(col, row)) continue;
+      var x0 = col * TS, y0 = row * TS;
+      c.fillStyle = INK; c.fillRect(x0, y0, TS, TS);
+      c.fillStyle = r() < 0.5 ? FLOOR : '#463b33'; c.fillRect(x0 + 1.5, y0 + 1.5, TS - 3, TS - 3);
+      if (glow && glow(col, row)) { c.fillStyle = 'rgba(230,187,80,.22)'; c.fillRect(x0 + 1.5, y0 + 1.5, TS - 3, TS - 3); }
+      for (var k = 0; k < 3; k++) TT.woodcut.gouge(c, 'rgba(14,10,9,.45)', x0 + 6 + r() * 30, y0 + 8 + r() * 30, 8 + r() * 10, r() - 0.5, 1.2);
+    }
+    return cv;
+  }
+  function corridor(col, row) { return row === ROW; }
+  function sprite(c, key, x, y, size, frame, flip, alpha) {
+    var s;
+    try { s = TT.sprites.get(key, frame || 0); } catch (e) { return; }
+    c.save(); c.globalAlpha = alpha == null ? 1 : alpha; c.translate(x, y);
+    if (flip) c.scale(-1, 1);
+    c.drawImage(s, -size / 2, -size * 0.78, size, size);
+    c.restore();
+  }
+  function hero(c, id, x, y, t, flip, alpha, size) { sprite(c, 'hero_' + id, x, y, size || 104, Math.floor(t * 7) % 4, flip, alpha); }
+  function door(c) {
+    // the way in: a dark arch on the left
+    c.fillStyle = INK; c.fillRect(0, ROW * TS - 26, 34, TS + 26);
+    c.fillStyle = '#6b4a30'; c.fillRect(0, ROW * TS - 30, 38, 8); c.fillRect(30, ROW * TS - 26, 8, TS + 26);
+    c.fillStyle = 'rgba(233,220,192,.12)'; c.fillRect(0, ROW * TS, 30, TS);
+  }
+  function hoard(c, x, y, k) {
+    var s = 82 * (0.55 + 0.45 * k);
+    sprite(c, 'treasure', x, y + 12, s, 0);
+  }
+  function sack(c, x, y) {
+    c.fillStyle = INK; c.beginPath(); c.ellipse(x, y, 17, 15, 0, 0, Math.PI * 2); c.fill(); c.fillRect(x - 8, y - 20, 16, 8);
+    c.fillStyle = '#c8a870'; c.beginPath(); c.ellipse(x, y, 14, 12, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#8a6a40'; c.fillRect(x - 6, y - 18, 12, 5);
+    c.fillStyle = GOLD; c.beginPath(); c.arc(x + 1, y + 2, 6, 0, Math.PI * 2); c.fill();
+    c.fillStyle = INK; c.font = '700 9px Georgia, serif'; c.textAlign = 'center'; c.fillText('$', x + 1, y + 5);
+  }
+  function number(c, txt, x, y, k, big, col) {
+    var a = 1 - seg(k, 0.6, 1), sz = big ? 40 : 22;
+    c.save(); c.globalAlpha = a; c.font = '700 ' + sz + 'px Cinzel, Georgia, serif'; c.textAlign = 'center';
+    c.lineWidth = 6; c.strokeStyle = INK; c.strokeText(txt, x, y - k * 30); c.fillStyle = col || BONE; c.fillText(txt, x, y - k * 30);
+    c.restore();
+  }
+  function stamp(c, txt, x, y, k, col) {
+    if (k <= 0) return;
+    var s = k < 0.25 ? 1.8 - 0.8 * ease(k / 0.25) : 1;
+    c.save(); c.translate(x, y); c.rotate(-0.08); c.scale(s, s); c.globalAlpha = 1 - seg(k, 0.85, 1);
+    c.font = '900 46px Cinzel, Georgia, serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.lineWidth = 10; c.strokeStyle = INK; c.strokeText(txt, 0, 0); c.fillStyle = col || GOLD; c.fillText(txt, 0, 0);
+    c.restore();
+  }
+  /* the player's hand: a pointing glove, with a ripple when it taps */
+  function hand(c, x, y, tap) {
+    c.save(); c.translate(x, y);
+    if (tap > 0 && tap < 1) {
+      c.strokeStyle = 'rgba(255,226,140,' + (1 - tap) + ')'; c.lineWidth = 4;
+      c.beginPath(); c.arc(0, 0, 8 + tap * 26, 0, Math.PI * 2); c.stroke();
+    }
+    var p = tap > 0 && tap < 0.3 ? 3 : 0;
+    c.translate(p, p);
+    var pts = [[0, 0], [6, 0], [7, 14], [16, 12], [24, 15], [30, 20], [30, 36], [22, 46], [6, 46], [-4, 30], [-8, 18], [-3, 16], [0, 22]];
+    c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); pts.forEach(function (q) { c.lineTo(q[0], q[1]); }); c.closePath();
+    c.lineWidth = 5; c.strokeStyle = INK; c.lineJoin = 'round'; c.stroke(); c.fillStyle = BONE; c.fill();
+    c.fillStyle = 'rgba(14,10,9,.35)'; c.fillRect(8, 22, 2, 12); c.fillRect(15, 22, 2, 12);
+    c.restore();
+  }
+  /* a strip of buttons along the bottom, like the game's own bar */
+  function bar(c, keys, lit) {
+    var n = keys.length, w = 56, x0 = W / 2 - n * w / 2;
+    c.fillStyle = 'rgba(14,10,9,.85)'; c.fillRect(x0 - 10, H - 66, n * w + 20, 62);
+    keys.forEach(function (k, i) {
+      var x = x0 + i * w + 4, y = H - 60;
+      c.fillStyle = i === lit ? '#e6bb50' : '#e9dcc0'; c.fillRect(x, y, 48, 50);
+      c.fillStyle = INK; c.fillRect(x + 3, y + 3, 42, 44);
+      try { c.drawImage(TT.sprites.get(k, 0), x + 5, y + 6, 38, 38); } catch (e) { /* none */ }
+    });
+    return function (i) { return [x0 + i * w + 28, H - 35]; };
+  }
+  function slot(keys, i) { var w = 56, x0 = W / 2 - keys.length * w / 2; return [x0 + i * w + 28, H - 35]; }
+  function boom(c, x, y, k, col) {
+    if (k <= 0 || k >= 1) return;
+    var r = 20 + 70 * ease(k);
+    c.save(); c.globalAlpha = 1 - k;
+    c.fillStyle = col || '#ffb040'; c.beginPath();
+    for (var i = 0; i < 18; i++) { var a = i / 18 * Math.PI * 2, rr = i % 2 ? r : r * 0.6; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+    c.closePath(); c.fill();
+    c.fillStyle = '#fff4e0'; c.beginPath(); c.arc(x, y, r * 0.35, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+  function spikes(c, x, y, k) {
+    if (k <= 0 || k >= 1) return;
+    var h = 26 * Math.sin(k * Math.PI);
+    for (var i = -2; i <= 2; i++) {
+      c.fillStyle = INK; c.beginPath(); c.moveTo(x + i * 8 - 5, y + 14); c.lineTo(x + i * 8, y + 14 - h - 2); c.lineTo(x + i * 8 + 5, y + 14); c.fill();
+      c.fillStyle = '#d8d0c0'; c.beginPath(); c.moveTo(x + i * 8 - 3, y + 14); c.lineTo(x + i * 8, y + 14 - h); c.lineTo(x + i * 8 + 3, y + 14); c.fill();
+    }
+  }
+  /* a hero who is hit and falls: tips over and fades */
+  function fallen(c, id, x, y, k) {
+    c.save(); c.translate(x, y); c.rotate(-1.4 * ease(k)); c.globalAlpha = 1 - k * 0.8;
+    sprite(c, 'hero_' + id, 0, 0, 104, 0);
+    c.restore();
+  }
+
+  /* ------------------------------------------------------------------ the scenes */
+  var SCENES = [
+    { cap: 'Heroes come for your gold', len: 6.4, bg: function () { return backdrop(corridor); }, draw: function (c, t) {
+      door(c);
+      var grab = 2.6, got = t >= grab;
+      hoard(c, 540, ROWY, got ? 0.82 : 1);
+      var x = t < grab ? lerp(40, 470, ease(seg(t, 0.2, grab))) : lerp(470, 20, ease(seg(t, 3.1, 5.8)));
+      hero(c, 'rogue', x, ROWY + 18, t, got, t > 5.6 ? 1 - seg(t, 5.6, 6.2) : 1);
+      if (got) sack(c, x, ROWY - 70 + Math.sin(t * 14) * 2);
+      if (t > grab && t < grab + 0.8) number(c, '-1 sack', 500, ROWY - 50, seg(t, grab, grab + 0.8), false, GOLD);
+    } },
+    { cap: 'Traps stop them', len: 6, bg: function () { return backdrop(corridor); }, draw: function (c, t) {
+      door(c);
+      var back = t > 3.2, x = lerp(500, 285, seg(t, 0.2, 2)), hit = seg(t, 2, 2.6);
+      hoard(c, 540, ROWY, back ? 1 : 0.82);
+      sprite(c, 'trap_spike_pit', tx(5) + 10, ROWY + 22, 46, Math.floor(t * 3) % 4);
+      spikes(c, tx(5) + 10, ROWY, seg(t, 1.95, 2.5));
+      if (t < 2) { hero(c, 'rogue', x, ROWY + 18, t, true); sack(c, x, ROWY - 70 + Math.sin(t * 14) * 2); }
+      else fallen(c, 'rogue', 285, ROWY + 18, hit);
+      if (t >= 2 && t < 2.9) number(c, '-40', 285, ROWY - 60, seg(t, 2, 2.9), true, EMBER);
+      // the sack flies home
+      if (t >= 2.4 && t < 3.3) { var k = ease(seg(t, 2.4, 3.2)); sack(c, lerp(285, 535, k), lerp(ROWY - 30, ROWY - 20, k) - Math.sin(k * Math.PI) * 70); }
+      if (back && t < 4.2) number(c, '+1 sack', 540, ROWY - 54, seg(t, 3.2, 4.2), false, GOLD);
+    } },
+    { cap: 'Dig a path, then build', len: 7.4, bg: null, draw: function (c, t) {
+      // the tunnel is dug tile by tile as the hand drags
+      var n = t < 1.3 ? 0 : Math.min(4, Math.ceil(seg(t, 1.3, 2.9) * 4));
+      if (!this._bgs) { this._bgs = []; for (var i = 0; i <= 4; i++) this._bgs.push(backdrop((function (m) { return function (col, row) { return row === ROW && (col < 4 || col > 7 || col - 4 < m); }; })(i))); }
+      c.drawImage(this._bgs[n], 0, 0);
+      door(c); hoard(c, 540, ROWY, 1);
+      var keys = ['icon_dig', 'trap_spike_pit', 'trap_poison_gas'];
+      var placed = t > 4.6;
+      if (placed) sprite(c, 'trap_spike_pit', tx(6), ROWY + 22, 46, Math.floor(t * 3) % 4);
+      bar(c, keys, t > 0.9 && t < 3.0 ? 0 : t > 3.6 && t < 4.6 ? 1 : -1);
+      var hp, tap = 0, d0 = slot(keys, 0), d1 = slot(keys, 1);
+      if (t < 0.9) hp = [lerp(300, d0[0], ease(seg(t, 0.1, 0.8))), lerp(120, d0[1], ease(seg(t, 0.1, 0.8)))];
+      else if (t < 1.3) { hp = [lerp(d0[0], tx(4), ease(seg(t, 1, 1.3))), lerp(d0[1], ROWY, ease(seg(t, 1, 1.3)))]; tap = seg(t, 0.9, 1.3); }
+      else if (t < 3.0) hp = [lerp(tx(4), tx(7) + 20, seg(t, 1.3, 2.9)), ROWY];
+      else if (t < 3.6) hp = [lerp(tx(7), d1[0], ease(seg(t, 3, 3.5))), lerp(ROWY, d1[1], ease(seg(t, 3, 3.5)))];
+      else if (t < 4.6) { hp = [lerp(d1[0], tx(6), ease(seg(t, 3.8, 4.5))), lerp(d1[1], ROWY, ease(seg(t, 3.8, 4.5)))]; tap = seg(t, 3.6, 3.95);
+        if (t > 3.8) sprite(c, 'trap_spike_pit', hp[0], hp[1] + 20, 40, 0, false, 0.7); }
+      else { hp = [tx(6) + 14, ROWY + 6]; tap = seg(t, 4.6, 5.0); }
+      hand(c, hp[0] + 4, hp[1] + 4, tap);
+    } },
+    { cap: 'Traps combine', len: 6, bg: function () { return backdrop(corridor); }, draw: function (c, t) {
+      door(c); hoard(c, 540, ROWY, 1);
+      var gx = tx(4), fx = tx(7), bt = 2.4, cx = (gx + fx) / 2 - 15;
+      sprite(c, 'trap_poison_gas', gx, ROWY + 22, 44, 0);
+      sprite(c, 'trap_flame_vent', fx, ROWY + 22, 44, Math.floor(t * 4) % 4);
+      // two heroes walk into the gas
+      [0, 1].forEach(function (i) {
+        var x = lerp(40 + i * 60, cx - 30 + i * 60, ease(seg(t, 0, bt - 0.3)));
+        if (t < bt) hero(c, i ? 'knight' : 'cleric', x, ROWY + 18, t + i, false);
+        else fallen(c, i ? 'knight' : 'cleric', x + (i ? 1 : -1) * 24 * ease(seg(t, bt, bt + 0.5)), ROWY + 18, seg(t, bt, bt + 0.7));
+      });
+      if (t < bt) {
+        // the gas, over them
+        var g = seg(t, 0, 1.2);
+        for (var i = 0; i < 7; i++) { c.fillStyle = 'rgba(130,200,70,' + (0.28 * g) + ')'; c.beginPath(); c.arc(cx + Math.sin(t * 2 + i) * 40, ROWY - 20 + Math.cos(t * 1.6 + i * 2) * 18, 30, 0, Math.PI * 2); c.fill(); }
+        // the glowing link that says these two react
+        c.save(); c.setLineDash([8, 6]); c.lineDashOffset = -t * 30; c.strokeStyle = 'rgba(255,210,90,' + (0.6 + 0.4 * Math.sin(t * 8)) + ')'; c.lineWidth = 4;
+        c.beginPath(); c.moveTo(gx, ROWY + 4); c.quadraticCurveTo((gx + fx) / 2, ROWY - 110, fx, ROWY + 4); c.stroke(); c.restore();
+        if (t > 1.7) { var f = seg(t, 1.7, bt); c.fillStyle = EMBER; c.beginPath(); c.moveTo(fx - 6, ROWY + 6); c.lineTo(fx - 6 - 70 * f, ROWY - 6 - 8 * Math.sin(t * 30)); c.lineTo(fx - 6, ROWY - 16); c.fill();
+          c.fillStyle = GOLD; c.beginPath(); c.moveTo(fx - 6, ROWY + 2); c.lineTo(fx - 6 - 40 * f, ROWY - 5); c.lineTo(fx - 6, ROWY - 10); c.fill(); }
+      }
+      boom(c, cx, ROWY - 16, seg(t, bt, bt + 0.9));
+      if (t > bt) number(c, '-90', cx, ROWY - 66, seg(t, bt + 0.1, bt + 1.4), true, EMBER);
+      stamp(c, 'COMBO!', W / 2, 52, seg(t, bt + 0.2, bt + 2.8));
+    } },
+    { cap: 'Rooms hit harder', len: 4.4, bg: function () {
+      return backdrop(function (col, row) { return col < 6 ? row === ROW : (row >= 2 && row <= 4 && col >= 7 && col <= 9) || (row === ROW); },
+        function (col, row) { return col >= 7 && col <= 9 && row >= 2 && row <= 4; });
+    }, draw: function (c, t) {
+      c.fillStyle = INK; c.fillRect(W / 2 - 2, 0, 4, H);
+      var hit = 1.6;
+      [[tx(3), false, '-12'], [tx(8), true, '-36']].forEach(function (s) {
+        sprite(c, 'trap_spike_pit', s[0], ROWY + 22, s[1] ? 52 : 40, 0);
+        spikes(c, s[0], ROWY, seg(t, hit, hit + 0.5));
+        var x = lerp(s[0] + 120, s[0], seg(t, 0.2, hit));
+        if (s[1] && t > hit) fallen(c, 'knight', x, ROWY + 18, seg(t, hit, hit + 0.6));
+        else hero(c, 'knight', x, ROWY + 18, t, true);
+        if (t > hit) number(c, s[2], s[0], ROWY - 62, seg(t, hit, hit + 1.6), s[1], s[1] ? EMBER : BONE);
+      });
+      c.save(); c.font = '700 18px Cinzel, Georgia, serif'; c.textAlign = 'center'; c.fillStyle = '#b8a888';
+      c.fillText('tunnel', W / 4, 40); c.fillText('room', W * 0.75, 40); c.restore();
+      c.strokeStyle = 'rgba(230,187,80,' + (0.5 + 0.4 * Math.sin(t * 5)) + ')'; c.lineWidth = 3; c.strokeRect(7 * TS + 2, 2 * TS + 2, 3 * TS - 4, 3 * TS - 4);
+    } },
+    { cap: 'Your boss fights too', len: 5.4, bg: function () { return backdrop(corridor); }, draw: function (c, t) {
+      door(c); hoard(c, 555, ROWY, 1);
+      var st = TT.state, bid = (st && st.bossId) || 'lich', bdef = TT.defs.bosses && TT.defs.bosses[bid];
+      var keys = ((bdef && bdef.spells) || []).slice(0, 3).map(function (s) { return 'spell_' + s.id; });
+      if (!keys.length) keys = ['spell_soul_bolt'];
+      sprite(c, 'boss_' + bid, 470, ROWY + 24, 110, Math.floor(t * 3) % 4, true);
+      var hx = lerp(60, 240, seg(t, 0, 2.2)), shot = 2.6;
+      if (t < shot + 0.3) hero(c, 'knight', t < 2.2 ? hx : 240, ROWY + 18, t, false);
+      else fallen(c, 'knight', 240, ROWY + 18, seg(t, shot + 0.3, shot + 1));
+      bar(c, keys, t > 1 && t < shot ? 0 : -1);
+      var s0 = slot(keys, 0), hp, tap = 0;
+      if (t < 1) hp = [lerp(330, s0[0], ease(seg(t, 0.2, 0.9))), lerp(130, s0[1], ease(seg(t, 0.2, 0.9)))];
+      else if (t < 2.2) { hp = [lerp(s0[0], 240, ease(seg(t, 1.4, 2.1))), lerp(s0[1], ROWY - 10, ease(seg(t, 1.4, 2.1)))]; tap = seg(t, 1, 1.4); }
+      else { hp = [240, ROWY - 10]; tap = seg(t, 2.2, 2.6); }
+      if (t > shot && t < shot + 0.35) {
+        var k = seg(t, shot, shot + 0.3), bx = lerp(440, 240, k), by = lerp(ROWY - 50, ROWY - 20, k);
+        c.fillStyle = '#b07ae0'; c.beginPath(); c.arc(bx, by, 10, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#f0e0ff'; c.beginPath(); c.arc(bx, by, 4, 0, Math.PI * 2); c.fill();
+      }
+      boom(c, 240, ROWY - 20, seg(t, shot + 0.3, shot + 1), '#b07ae0');
+      if (t > shot + 0.3) number(c, '-60', 240, ROWY - 70, seg(t, shot + 0.3, shot + 1.6), true, '#d0a8f0');
+      hand(c, hp[0] + 4, hp[1] + 4, tap);
+    } },
+    { cap: 'Build. Raid. Repeat.', len: 4.5, bg: null, draw: function (c, t) {
+      c.fillStyle = '#191310'; c.fillRect(0, 0, W, H);
+      var items = [['trap_spike_pit', 'Build'], ['hero_knight', 'Raid'], ['treasure', 'Keep it']], on = Math.floor(t / 1.5) % 3;
+      items.forEach(function (it, i) {
+        var x = 110 + i * 190, y = 140, lit = i === on, s = lit ? 1.08 + 0.04 * Math.sin(t * 8) : 1;
+        c.save(); c.translate(x, y); c.scale(s, s);
+        c.fillStyle = INK; c.fillRect(-62, -70, 124, 140);
+        c.fillStyle = lit ? GOLD : '#e9dcc0'; c.fillRect(-58, -66, 116, 132);
+        c.fillStyle = '#2a211b'; c.fillRect(-52, -60, 104, 92);
+        try { c.drawImage(TT.sprites.get(it[0], 0), -40, -56, 80, 80); } catch (e) { /* none */ }
+        c.font = '700 21px Cinzel, Georgia, serif'; c.textAlign = 'center'; c.fillStyle = INK; c.fillText(it[1], 0, 56);
+        c.restore();
+        if (i < 2) {
+          c.fillStyle = lit ? GOLD : '#6b5a48';
+          c.beginPath(); c.moveTo(x + 76, y - 12); c.lineTo(x + 104, y); c.lineTo(x + 76, y + 12); c.fill();
+        }
+      });
+      c.strokeStyle = '#6b5a48'; c.lineWidth = 4; c.beginPath(); c.moveTo(490, 222); c.quadraticCurveTo(300, 290, 110, 222); c.stroke();
+      c.fillStyle = '#6b5a48'; c.beginPath(); c.moveTo(102, 210); c.lineTo(122, 222); c.lineTo(100, 232); c.fill();
+    } }
+  ];
+
+  /* ------------------------------------------------------------------ the viewer */
+  var root = null, raf = 0, page = 0, t0 = 0, done = null, cv = null, ctx = null, cap = null, dots = [], prev = null, next = null;
+  function frame(now) {
+    if (!root) return;
+    var s = SCENES[page], t = TT.guide.freeze != null ? TT.guide.freeze : ((now - t0) / 1000) % s.len;
+    ctx.save(); ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+    if (s.bg) { if (!s._bg) s._bg = s.bg(); ctx.drawImage(s._bg, 0, 0); }
+    try { s.draw(ctx, t); } catch (e) { TT.reportError && TT.reportError('guide.scene', e); }
+    ctx.restore();
+    raf = requestAnimationFrame(frame);
+  }
+  function go(n) {
+    page = clamp(n, 0, SCENES.length - 1); t0 = performance.now();
+    cap.textContent = SCENES[page].cap;
+    dots.forEach(function (d, i) { d.classList.toggle('on', i === page); });
+    prev.disabled = page === 0;
+    next.textContent = page === SCENES.length - 1 ? 'Play!' : '▶';
+    next.classList.toggle('go', page === SCENES.length - 1);
+  }
+  function close() {
+    if (!root) return;
+    cancelAnimationFrame(raf); root.remove(); root = null;
+    document.removeEventListener('keydown', key, true);
+    var d = done; done = null;
+    if (d) d();
+  }
+  function key(e) {
+    if (!root) return;
+    if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (page === SCENES.length - 1) close(); else go(page + 1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); go(page - 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  }
+  var styled = false;
+  // any other screen (the title, a quit, a load) takes the guide away with it
+  TT.events.on('screenShow', function () { if (root) close(); });
+  TT.guide = {
+    isOpen: function () { return !!root; },
+    go: function (n) { if (root) go(n); },
+    paint: function (t) { if (!root) return; TT.guide.freeze = t; cancelAnimationFrame(raf); frame(performance.now()); },
+    show: function (onDone) {
+      if (root) return;
+      if (!styled) { var st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st); styled = true; }
+      done = onDone || null;
+      root = document.createElement('div'); root.id = 'tt-guide';
+      (document.getElementById('ui') || document.body).appendChild(root);
+      cap = ui.el('div', 'cap', '', root);
+      cv = document.createElement('canvas');
+      var dpr = Math.min(2, window.devicePixelRatio || 1); cv.width = W * dpr; cv.height = H * dpr;
+      root.appendChild(cv); ctx = cv.getContext('2d');
+      var dr = ui.el('div', 'dots', null, root); dots = SCENES.map(function () { return ui.el('div', 'dot', null, dr); });
+      var nav = ui.el('div', 'nav', null, root);
+      prev = ui.el('button', null, '◀', nav); next = ui.el('button', null, '▶', nav);
+      prev.addEventListener('click', function () { ui.click(); go(page - 1); });
+      next.addEventListener('click', function () { ui.click(); if (page === SCENES.length - 1) close(); else go(page + 1); });
+      cv.addEventListener('click', function () { ui.click(); if (page === SCENES.length - 1) close(); else go(page + 1); });
+      var sk = ui.el('button', 'skip', 'Skip', root);
+      sk.addEventListener('click', function () { ui.click(); close(); });
+      document.addEventListener('keydown', key, true);
+      go(0);
+      raf = requestAnimationFrame(frame);
+    }
+  };
+})(window.TT);
+
+</script>
 <script>/* src/ui/tutorial.js */
 /*
  * Tiny Tyrant — src/ui/tutorial.js
@@ -30156,7 +30503,17 @@ button { font-family: var(--font-body); color: var(--text); }
 
   var CSS = [
     '#tt-coach{position:absolute;left:50%;top:108px;transform:translateX(-50%);z-index:38;display:flex;align-items:center;gap:12px;width:min(560px,calc(100vw - 24px));padding:10px 14px;background:#1c1420;border:2px solid #e9a55f;border-radius:6px;box-shadow:0 0 22px rgba(233,165,95,.45);color:var(--text);font-size:15px;line-height:1.35}',
-    '#tt-coach .tx{flex:1}',
+    '#tt-coach .tx{flex:1;font-size:19px;font-family:var(--font-display);font-weight:700}',
+    '#tt-coach .ic{display:flex;gap:4px;align-items:center}',
+    '#tt-coach .ic canvas{width:48px;height:48px;background:#0e0a09;border:2px solid #0e0a09;border-radius:3px}',
+    '#tt-coach .ic .plus{font-size:24px;color:#8a3a0e;font-weight:900}',
+    '#tt-point{position:fixed;z-index:70;pointer-events:none;width:44px;height:52px;margin-left:-22px;animation:ttpt .7s ease-in-out infinite alternate}',
+    '#tt-point.up{transform:rotate(180deg);animation-name:ttptu}',
+    '#tt-coach.step{bottom:224px!important}',
+    '#tt-coach:not(.step) .tx{font-size:15px;font-family:var(--font-body);font-weight:600}',
+    '@media (max-width:640px){#tt-coach.step{bottom:280px!important}}',
+    '@keyframes ttpt{from{translate:0 -60px}to{translate:0 -46px}}',
+    '@keyframes ttptu{from{translate:0 0}to{translate:0 14px}}',
     '#tt-coach .n{display:block;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:#e9a55f}',
     '#tt-coach button{min-height:40px;padding:0 12px;cursor:pointer;background:transparent;border:1px solid var(--edge);border-radius:3px;color:var(--text);font-family:var(--font-body);font-size:13px;white-space:nowrap}',
     '#tt-coach button.go{border-color:#e9a55f;background:rgba(233,165,95,.16)}',
@@ -30191,16 +30548,87 @@ button { font-family: var(--font-body); color: var(--text); }
   function pointTrap(name, tab) { return toolByName(name) || tabByName(tab); }
 
   var STEPS = [
-    { text: 'Heroes come in the door, grab treasure from your hoard and carry it out. If the hoard runs dry, the reign is over. Your gold is just for building.', button: 'Got it' },
-    { text: 'Pick the Spike Pit and put it on the corridor, where the heroes walk.', point: function () { return pointTrap('Spike Pit', 'Floor'); }, done: function () { return built('spike_pit') > 0; } },
-    { text: 'Traps combine. Place Poison Gas, then a Flame Vent two tiles away. A glowing link means they react.', point: function () { return built('poison_gas') ? pointTrap('Flame Vent', 'Floor') : pointTrap('Poison Gas', 'Area'); }, done: function () { return built('poison_gas') > 0 && built('flame_vent') > 0; }, also: 'flame' },
-    { text: 'Traps hit softly in tunnels, and red arrows mean heroes charge there. Pick Dig and widen the corridor into a room, 3 tiles wide and 3 tall. Its floor glows: traps there hit far harder.', point: function () { return toolByName('Dig'); }, done: function () { return TT.rooms.count(st()) > 0; } },
-    { text: 'Ready. Start the raid. Kill thieves before they reach the door and the gold comes back.', point: function () { return document.querySelector('#hud-top .primary') || document.getElementById('hudbtn-start'); }, done: function () { return st().phase === 'raid'; } },
-    { text: 'Your boss has spells at the bottom of the screen. Tap one, then tap where it should land.', point: function () { return document.querySelector('.spells .spell'); }, button: 'Got it', raid: true }
+    { icons: ['trap_spike_pit'], text: 'Put a Spike Pit on the path', point: function () { return pointTrap('Spike Pit', 'Floor'); }, done: function () { return built('spike_pit') > 0; },
+      spots: function () { return [onPath('spike_pit', 0.3)]; } },
+    { icons: ['trap_poison_gas', '+', 'trap_flame_vent'], text: 'Poison Gas, then a Flame Vent near it', point: function () { return built('poison_gas') ? pointTrap('Flame Vent', 'Floor') : pointTrap('Poison Gas', 'Area'); }, done: function () { return built('poison_gas') > 0 && built('flame_vent') > 0; },
+      spots: function () { var g = st().traps.filter(function (t) { return t.id === 'poison_gas'; })[0]; return [g ? near(g, 'flame_vent') : onPath('poison_gas', 0.5)]; } },
+    { icons: ['icon_dig'], text: 'Dig a big room on the path', point: function () { return toolByName('Dig'); }, done: function () { return TT.rooms.count(st()) > 0; },
+      room: function () { return onPath(null, 0.6); } },
+    { icons: ['icon_raid'], text: 'Start the raid!', point: function () { return document.querySelector('#hud-top .primary') || document.getElementById('hudbtn-start'); }, done: function () { return st().phase === 'raid'; } },
+    { icons: ['spell'], text: 'Tap a spell, then tap a hero', point: function () { return document.querySelector('.spells .spell'); }, done: function () { return cast; }, button: 'Got it', raid: true }
   ];
 
-  function unlight() { lit.forEach(function (e) { e.classList.remove('tt-lit'); }); lit = []; }
-  function light(e) { if (e) { e.classList.add('tt-lit'); lit.push(e); } }
+  /* ------------------------------------------------------------------ where to build: glowing spots on the map */
+  var pathMemo = { rev: -1, path: [] };
+  function route() {
+    var g = st().grid;
+    if (pathMemo.rev === g.rev && pathMemo.g === g) return pathMemo.path;
+    var p = TT.path.find(g, g.entrance.x, g.entrance.y, g.treasure.x, g.treasure.y, { cost: function (x, y) { return TT.grid.isWalkable(g, x, y) ? 1 : Infinity; } }) || [];
+    pathMemo = { rev: g.rev, g: g, path: p };
+    return p;
+  }
+  function fits(id, x, y) { return !id || TT.game.check(st(), { type: 'trap', id: id }, x, y).ok; }
+  /* a tile on the heroes' path, about frac of the way along, where this trap can go */
+  function onPath(id, frac) {
+    var p = route(), n = p.length, from = Math.floor(n * frac);
+    for (var i = 0; i < n; i++) { var q = p[(from + i) % n]; if (q && fits(id, q.x, q.y)) return { x: q.x, y: q.y }; }
+    return null;
+  }
+  /* a path tile about two steps from a trap already placed */
+  function near(tp, id) {
+    var p = route(), best = null, bd = 1e9;
+    p.forEach(function (q) { var d = Math.abs(q.x - tp.x) + Math.abs(q.y - tp.y); if (d >= 1 && d <= 3 && fits(id, q.x, q.y) && Math.abs(d - 2) < bd) { bd = Math.abs(d - 2); best = { x: q.x, y: q.y }; } });
+    return best || onPath(id, 0.5);
+  }
+  var hintMemo = { key: '', spots: [], room: null };
+  function hints() {
+    var s = stepNo >= 0 && STEPS[stepNo], state = st();
+    if (!s || !state || state.phase !== 'build' || !box || box.classList.contains('hidden') || tipOn) return null;
+    var k = stepNo + ':' + state.grid.rev + ':' + state.traps.length;
+    if (hintMemo.key !== k) hintMemo = { key: k, spots: s.spots ? s.spots().filter(Boolean) : [], room: s.room ? s.room() : null };
+    return hintMemo;
+  }
+  function drawHints(ctx, state, info) {
+    var h = hints();
+    if (!h) return;
+    var T = info.T, t = info.t, a = 0.55 + 0.4 * Math.sin(t * 5);
+    ctx.save();
+    h.spots.forEach(function (p) {
+      var x = p.x * T, y = p.y * T, bob = Math.sin(t * 6) * 5;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,210,74,' + a + ')'; ctx.fillStyle = 'rgba(255,210,74,' + (a * 0.22) + ')';
+      ctx.fillRect(x + 2, y + 2, T - 4, T - 4); ctx.strokeRect(x + 2, y + 2, T - 4, T - 4);
+      ctx.fillStyle = '#ffd24a'; ctx.strokeStyle = '#0e0a09'; ctx.lineWidth = 2;
+      var m = x + T / 2, b0 = y - 4 + bob;
+      ctx.beginPath(); ctx.moveTo(m - 6, b0 - 30); ctx.lineTo(m + 6, b0 - 30); ctx.lineTo(m + 6, b0 - 16); ctx.lineTo(m + 13, b0 - 16); ctx.lineTo(m, b0); ctx.lineTo(m - 13, b0 - 16); ctx.lineTo(m - 6, b0 - 16); ctx.closePath(); ctx.fill(); ctx.stroke();
+    });
+    if (h.room) {
+      ctx.setLineDash([6, 4]); ctx.lineDashOffset = -t * 20; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,210,74,' + a + ')';
+      ctx.strokeRect((h.room.x - 1) * T + 1, (h.room.y - 1) * T + 1, 3 * T - 2, 3 * T - 2);
+      ctx.fillStyle = 'rgba(255,210,74,' + (a * 0.12) + ')'; ctx.fillRect((h.room.x - 1) * T + 1, (h.room.y - 1) * T + 1, 3 * T - 2, 3 * T - 2);
+    }
+    ctx.restore();
+  }
+
+  var arrow = null;
+  function pointAt(e) {
+    if (!arrow) {
+      arrow = document.createElement('canvas'); arrow.id = 'tt-point'; arrow.width = 88; arrow.height = 104;
+      var c = arrow.getContext('2d'); c.scale(2, 2);
+      c.beginPath(); c.moveTo(12, 2); c.lineTo(32, 2); c.lineTo(32, 26); c.lineTo(42, 26); c.lineTo(22, 50); c.lineTo(2, 26); c.lineTo(12, 26); c.closePath();
+      c.lineWidth = 4; c.lineJoin = 'round'; c.strokeStyle = '#0e0a09'; c.stroke(); c.fillStyle = '#ffd24a'; c.fill();
+      document.body.appendChild(arrow);
+    }
+    var r = e && e.getBoundingClientRect();
+    if (!r || !r.width) { arrow.style.display = 'none'; return; }
+    var up = r.top < 90;   // too near the top: point up at it from below
+    arrow.style.display = 'block'; arrow.classList.toggle('up', up);
+    arrow.style.left = (r.left + r.width / 2) + 'px'; arrow.style.top = (up ? r.bottom + 6 : r.top) + 'px';
+  }
+  function unlight() { lit.forEach(function (e) { e.classList.remove('tt-lit'); }); lit = []; if (arrow) arrow.style.display = 'none'; }
+  function light(e) { if (e) { e.classList.add('tt-lit'); lit.push(e); pointAt(e); } }
+  var cast = false;     // a spell has been cast this run
+  TT.events.on('bossSpell', function (e) { if (!e || !e.state || e.state === st()) cast = true; });
+  var guided = false;   // the picture guide has played this run
   function finish() {
     data().tutorial = 'done';
     M.save();
@@ -30209,7 +30637,15 @@ button { font-family: var(--font-body); color: var(--text); }
     if (box) box.classList.add('hidden');
   }
   function render(s) {
-    box.innerHTML = '<div class="tx"><span class="n">' + (stepNo + 1) + ' of ' + STEPS.length + '</span>' + ui.esc(s.text) + '</div>';
+    box.innerHTML = '';
+    box.classList.add('step');
+    var ic = ui.el('div', 'ic', null, box);
+    (s.icons || []).forEach(function (k) {
+      if (k === '+') { ui.el('span', 'plus', '+', ic); return; }
+      if (k === 'spell') { var sp = TT.state && TT.defs.bosses[TT.state.bossId] && TT.defs.bosses[TT.state.bossId].spells; k = sp && sp[0] ? 'spell_' + sp[0].id : 'icon_soul'; }
+      try { ic.appendChild(TT.sprites.icon(k, 88)); } catch (e) { /* no art */ }
+    });
+    ui.el('div', 'tx', '<span class="n">' + (stepNo + 1) + ' / ' + STEPS.length + '</span>' + ui.esc(s.text), box);
     if (s.button) {
       var b = ui.el('button', 'go', ui.esc(s.button), box);
       b.addEventListener('click', function () { ui.click(); advance(); });
@@ -30221,11 +30657,11 @@ button { font-family: var(--font-body); color: var(--text); }
   function advance() {
     stepNo++;
     if (stepNo >= STEPS.length) { finish(); return; }
-    if (stepNo === 3) startDug = dug();
+    if (stepNo === 2) startDug = dug();
     render(STEPS[stepNo]);
   }
   function blocked() {
-    return S.isOpen() || document.querySelector('#tt-book:not(.hidden)') || document.getElementById('tt-evo') || document.getElementById('tt-cells') || document.getElementById('tt-intro');
+    return (TT.guide && TT.guide.isOpen()) || S.isOpen() || document.querySelector('#tt-book:not(.hidden)') || document.getElementById('tt-evo') || document.getElementById('tt-cells') || document.getElementById('tt-intro');
   }
   function sync() {
     if (box && tipOn && blocked()) { clearTimeout(tipTimer); tipOn = false; box.classList.add('hidden'); }
@@ -30234,7 +30670,14 @@ button { font-family: var(--font-body); color: var(--text); }
     if (!state || !ui.hud.visible || isDone()) { if (!tipOn) box.classList.add('hidden'); unlight(); return; }
     if (state.raidNum > 1) { finish(); return; }
     if (blocked()) { box.classList.add('hidden'); unlight(); return; }
-    if (stepNo < 0) { advance(); return; }
+    if (stepNo < 0) {
+      if (!guided && !data().guided && TT.guide) {
+        guided = true; box.classList.add('hidden'); unlight();
+        TT.guide.show(function () { data().guided = true; M.save(); });
+        return;
+      }
+      advance(); return;
+    }
     var s = STEPS[stepNo];
     box.classList.remove('hidden');
     if (s.done && s.done()) { advance(); s = STEPS[stepNo]; if (!s) return; }
@@ -30243,10 +30686,10 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   TT.tutorial = {
     firstNight: function (st) { return !isDone() && st.raidNum === 1; },
-    restart: function () { data().tutorial = 'again'; data().tips = {}; stepNo = -1; M.save(); }
+    restart: function () { data().tutorial = 'again'; data().tips = {}; data().guided = false; stepNo = -1; M.save(); }
   };
   /* The first night has no card to choose: the lesson comes first, and the choices start on night two. */
-  TT.events.on('runStart', function () { stepNo = -1; });
+  TT.events.on('runStart', function () { stepNo = -1; guided = false; cast = false; });
 
   /* ------------------------------------------------------------------ one-time tips */
   function tip(id, text) {
@@ -30254,6 +30697,7 @@ button { font-family: var(--font-body); color: var(--text); }
     tips()[id] = true;
     M.save();
     tipOn = true;
+    box.classList.remove('step');
     box.innerHTML = '<div class="tx">' + ui.esc(text) + '</div>';
     var b = ui.el('button', null, 'OK', box);
     function close() { clearTimeout(tipTimer); tipOn = false; box.classList.add('hidden'); }
@@ -30287,11 +30731,17 @@ button { font-family: var(--font-body); color: var(--text); }
     b.textContent = 'Replay Tutorial';
     b.addEventListener('click', function () { ui.click(); TT.tutorial.restart(); ui.toast('The tutorial plays in your next new game.', 'good'); });
     row.insertBefore(b, row.firstChild);
+    if (TT.guide) {
+      var g = document.createElement('button'); g.className = 'tt-btn primary'; g.textContent = 'Picture Guide';
+      g.addEventListener('click', function () { ui.click(); TT.guide.show(); });
+      row.insertBefore(g, row.firstChild);
+    }
   });
   TT.events.on('uiReady', function () {
     var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
     box = ui.el('div', 'hidden', null, document.getElementById('ui')); box.id = 'tt-coach';
     setInterval(sync, 250);
+    if (TT.render && TT.render.addLayer) TT.render.addLayer('overlay', drawHints);
     setInterval(nightTips, 1000);
   });
 })(window.TT);
