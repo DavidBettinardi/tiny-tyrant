@@ -11441,7 +11441,7 @@ button { font-family: var(--font-body); color: var(--text); }
   };
   /* Dread: a ramp in hero toughness as word of the barrow spreads. Heroes no longer retreat when hurt,
      so they die more often and pay out more; the ramp is high to make up for it. */
-  var DREAD_BASE = 1.2, DREAD_STEP = 0.245, DREAD_MAX = 6;
+  var DREAD_BASE = 1.2, DREAD_STEP = 0.22, DREAD_MAX = 6;
   SEASON.dread = function (state) {
     var r = TT.pace(state);
     return Math.min(DREAD_MAX, DREAD_BASE + DREAD_STEP * (r - 1));
@@ -11466,7 +11466,7 @@ button { font-family: var(--font-body); color: var(--text); }
   /* The war-band marches under blessed shields and with the Church's sappers in front: every trap in the
      barrow bites the final assault for FINAL_TRAP_WARD of its usual damage. Without this, a long trap
      gauntlet ground the whole assault down before it ever saw the boss. */
-  var FINAL_TRAP_WARD = 0.6;
+  var FINAL_TRAP_WARD = 0.8;
   SEASON.FINAL_TRAP_WARD = FINAL_TRAP_WARD;
   TT.addFilter('damage', function (amt, ctx) {
     var t = ctx.target, c = ctx.cause;
@@ -11627,6 +11627,12 @@ button { font-family: var(--font-body); color: var(--text); }
   H.checkOutcome = function (state) {
     var raid = state.raid;
     var bossDef = TT.defs.bosses[state.bossId], bn = bossDef ? bossDef.name : 'Your boss';
+    // Gentle forgives one disaster per region: the first time the hoard runs dry, an old buried cache turns up
+    if (state.hoard <= 0 && TT.difficulty && TT.difficulty.gentle(state) && !ext(state).cache && state.raidNum < state.maxRaids) {
+      ext(state).cache = true;
+      state.hoard = 300;
+      TT.events.emit('buriedCache', { state: state, amount: 300 });
+    }
     if (state.hoard <= 0) return { result: 'defeat', reason: 'The hoard is gone, carried off coin by coin. A keeper with nothing left to keep is no keeper at all, whatever sits in the treasury.' };
     if (state.raidNum >= state.maxRaids) {
       var f = ext(state).final;
@@ -12164,13 +12170,23 @@ button { font-family: var(--font-body); color: var(--text); }
     { id: 'chain_reaction', name: 'Chain Reaction', desc: 'A hero killed by a trap bursts, hurting heroes close by.', cost: 200, rank: 4 },
     { id: 'blood_money', name: 'Blood Money', desc: 'Heroes killed by traps pay 50% more gold.', cost: 200, rank: 4 },
     { id: 'old_guard', name: 'Old Guard', desc: 'Start each reign with two free skeletons.', cost: 200, rank: 4 },
-    { id: 'frenzy', name: 'Frenzy', desc: 'Minions hit 20% harder but have 10% less health.', cost: 180, rank: 4 },
-    { id: 'ruinous_works', name: 'Ruinous Works', desc: 'Traps deal 25% more damage but cost 40% more.', cost: 240, rank: 5 },
-    { id: 'cheap_labor', name: 'Cheap Labour', desc: 'Traps cost 20% less but deal 15% less damage.', cost: 240, rank: 5 },
-    { id: 'elite_guard', name: 'Elite Guard', desc: 'Minions cost twice as much and are 60% stronger.', cost: 260, rank: 5 },
-    { id: 'soulless', name: 'Soulless', desc: 'Minions cost no souls but have 20% less health.', cost: 260, rank: 5 },
-    { id: 'devils_bargain', name: "Devil's Bargain", desc: 'Earn 25% more gold each night. Heroes have 15% more health.', cost: 280, rank: 5 },
-    { id: 'iron_master', name: 'Iron Master', desc: 'Your boss has 25% more health. The hoard starts 25% smaller.', cost: 300, rank: 5 }
+    { id: 'frenzy', name: 'Frenzy', desc: 'Minions hit 20% harder.', cost: 180, rank: 4 },
+    { id: 'ruinous_works', name: 'Ruinous Works', desc: 'Traps deal 15% more damage.', cost: 240, rank: 5 },
+    { id: 'cheap_labor', name: 'Cheap Labour', desc: 'Traps cost 15% less.', cost: 240, rank: 5 },
+    { id: 'elite_guard', name: 'Elite Guard', desc: 'Minions have 25% more health and hit 25% harder.', cost: 260, rank: 5 },
+    { id: 'soulless', name: 'Soulless', desc: 'Minions cost no souls.', cost: 260, rank: 5 },
+    { id: 'devils_bargain', name: "Devil's Bargain", desc: 'Earn 20% more gold each night.', cost: 280, rank: 5 },
+    { id: 'iron_master', name: 'Iron Master', desc: 'Your boss has 25% more health.', cost: 300, rank: 5 },
+    { id: 'whetstones', name: 'Whetstones', desc: 'Traps deal 10% more damage.', cost: 340, rank: 6 },
+    { id: 'second_vault', name: 'Second Cellar', desc: 'Start with 250 more in the hoard.', cost: 340, rank: 6 },
+    { id: 'oiled_gears', name: 'Oiled Gears', desc: 'Traps reset 10% faster.', cost: 420, rank: 7 },
+    { id: 'fat_purse', name: 'Fat Purse', desc: 'Start with 150 more gold.', cost: 420, rank: 7 },
+    { id: 'grave_tithe', name: 'Grave Tithe', desc: 'Gain 1 more soul every night.', cost: 500, rank: 8 },
+    { id: 'iron_bones', name: 'Iron Bones', desc: 'Minions have 20% more health.', cost: 500, rank: 8 },
+    { id: 'black_ledger', name: 'Black Ledger', desc: 'Earn 10% more gold each night.', cost: 600, rank: 9 },
+    { id: 'dark_tongue', name: 'Dark Tongue', desc: 'Spells return 10% faster.', cost: 600, rank: 9 },
+    { id: 'tyrants_due', name: "Tyrant's Due", desc: 'Traps deal 10% more damage and your boss has 15% more health.', cost: 800, rank: 10 },
+    { id: 'bottomless', name: 'Bottomless', desc: 'Start with 400 more in the hoard.', cost: 800, rank: 10 }
   ];
   var BY_ID = {};
   P.LIST.forEach(function (u) { BY_ID[u.id] = u; });
@@ -12239,7 +12255,9 @@ button { font-family: var(--font-body); color: var(--text); }
     state.ext.pacts = {};
     ids.forEach(function (id) { state.ext.pacts[id] = true; });
     if (P.has(state, 'deep_vault')) { state.hoard += 150; state.startHoard += 150; }
-    if (P.has(state, 'iron_master')) { state.hoard = Math.round(state.hoard * 0.75); state.startHoard = state.hoard; }
+    if (P.has(state, 'second_vault')) { state.hoard += 250; state.startHoard += 250; }
+    if (P.has(state, 'bottomless')) { state.hoard += 400; state.startHoard += 400; }
+    if (P.has(state, 'fat_purse')) state.gold += 150;
     if (P.has(state, 'war_chest')) state.gold += 120;
     if (P.has(state, 'soul_jar')) state.souls += 6;
     if (P.has(state, 'old_guard') && TT.defs.minions.skeleton) {
@@ -12257,8 +12275,9 @@ button { font-family: var(--font-body); color: var(--text); }
     if (!c || !t || t.kind !== 'hero') return amt;
     if (c.kind === 'trap') {
       if (on(ctx, 'serrated')) amt *= 1.12;
-      if (on(ctx, 'ruinous_works')) amt *= 1.25;
-      if (on(ctx, 'cheap_labor')) amt *= 0.85;
+      if (on(ctx, 'ruinous_works')) amt *= 1.15;
+      if (on(ctx, 'whetstones')) amt *= 1.1;
+      if (on(ctx, 'tyrants_due')) amt *= 1.1;
     } else if (c.kind === 'minion' && on(ctx, 'terror') && TT.rng.chance(0.12)) {
       CB.applyStatus(t, 'fear', { duration: 2 });
     }
@@ -12268,11 +12287,9 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.addFilter('cost', function (c, ctx) {
     var mul = 1, souls = c.souls;
     if (ctx.kind === 'traps') {
-      if (on(ctx, 'ruinous_works')) mul *= 1.4;
-      if (on(ctx, 'cheap_labor')) mul *= 0.8;
+      if (on(ctx, 'cheap_labor')) mul *= 0.85;
     } else if (ctx.kind === 'minions') {
       if (on(ctx, 'cheap_bones')) mul *= 0.75;
-      if (on(ctx, 'elite_guard')) { mul *= 2; souls *= 2; }
       if (on(ctx, 'soulless')) souls = 0;
     } else if (ctx.kind === 'dig' && on(ctx, 'tunnellers')) mul *= 0.6;
     if (mul === 1 && souls === c.souls) return c;
@@ -12282,9 +12299,9 @@ button { font-family: var(--font-body); color: var(--text); }
   TT.addFilter('minionStats', function (m, ctx) {
     var hp = 1, dmg = 1;
     if (on(ctx, 'thick_hides')) hp *= 1.15;
-    if (on(ctx, 'frenzy')) { dmg *= 1.2; hp *= 0.9; }
-    if (on(ctx, 'soulless')) hp *= 0.8;
-    if (on(ctx, 'elite_guard')) { hp *= 1.6; dmg *= 1.6; }
+    if (on(ctx, 'frenzy')) dmg *= 1.2;
+    if (on(ctx, 'iron_bones')) hp *= 1.2;
+    if (on(ctx, 'elite_guard')) { hp *= 1.25; dmg *= 1.25; }
     if (hp !== 1) { m.maxHp = Math.max(1, Math.round(m.maxHp * hp)); m.hp = m.maxHp; }
     if (dmg !== 1) m.dmg *= dmg;
     return m;
@@ -12292,27 +12309,31 @@ button { font-family: var(--font-body); color: var(--text); }
 
   TT.addFilter('heroStats', function (h, ctx) {
     if (on(ctx, 'hidden_works')) h.detectRadius *= 0.75;
-    if (on(ctx, 'devils_bargain')) { h.maxHp = Math.round(h.maxHp * 1.15); h.hp = h.maxHp; }
     return h;
   }, 31);
 
   TT.addFilter('bossStats', function (b, ctx) {
     if (on(ctx, 'iron_master')) b.maxHp = b.hp = Math.round(b.maxHp * 1.25);
+    if (on(ctx, 'tyrants_due')) b.maxHp = b.hp = Math.round(b.maxHp * 1.15);
     return b;
   }, 31);
 
   TT.addFilter('buildIncome', function (inc, ctx) {
-    if (on(ctx, 'devils_bargain')) inc.gold = Math.round(inc.gold * 1.25);
+    if (on(ctx, 'devils_bargain')) inc.gold = Math.round(inc.gold * 1.2);
     if (on(ctx, 'night_tithe')) inc.souls += 1;
+    if (on(ctx, 'grave_tithe')) inc.souls += 1;
+    if (on(ctx, 'black_ledger')) inc.gold = Math.round(inc.gold * 1.1);
     return inc;
   });
 
   TT.events.on('trapTrigger', function (e) {
     if (P.has(e.state || TT.state, 'hair_trigger') && e.trap) e.trap.cd *= 0.85;
+    if (P.has(e.state || TT.state, 'oiled_gears') && e.trap) e.trap.cd *= 0.9;
   });
   TT.events.on('bossSpell', function (e) {
     var b = e.boss;
     if (P.has(e.state, 'swift_spells') && b && b.cooldowns && e.spell) b.cooldowns[e.spell.id] *= 0.85;
+    if (P.has(e.state, 'dark_tongue') && b && b.cooldowns && e.spell) b.cooldowns[e.spell.id] *= 0.9;
   });
 
   /* Kills: who did it decides what the body pays. */
@@ -12353,7 +12374,7 @@ button { font-family: var(--font-body); color: var(--text); }
   'use strict';
   var H = TT.hooks, M = TT.meta;
   var G = TT.glory = TT.glory || {};
-  var WRATH_MAX = 10, WRATH_HP = 0.08, WRATH_DMG = 0.04, WRATH_SPEED = 0.015;
+  var WRATH_MAX = 10, WRATH_HP = 0.06, WRATH_DMG = 0.03, WRATH_SPEED = 0.015;
   var GRADE_INFAMY = { S: 8, A: 5, B: 2, C: 0 };
 
   function ext(state) {
@@ -14852,7 +14873,7 @@ button { font-family: var(--font-body); color: var(--text); }
     { id: 'saints_march', name: 'Saint\'s March', x: 41, y: 55, tier: 2, foeName: 'The faithful', foes: ['cleric', 'paladin', 'templar', 'monk'], rule: 'Heroes have 10% more health.', reward: { hoard: 200 }, rewardText: '+200 starting hoard' },
     { id: 'storm_coast', name: 'Storm Coast', x: 22, y: 49, tier: 3, foeName: 'Storm mages', foes: ['stormcaller', 'mage', 'enchanter', 'bard'], rule: 'Combos deal 25% more damage. Parties +1.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
     { id: 'ember_pass', name: 'Ember Pass', x: 36, y: 42, tier: 3, foeName: 'Fire brigands', foes: ['alchemist', 'hexblade', 'ogre', 'mage'], rule: 'Fire +20%. Heroes +5% health.', reward: { souls: 3 }, rewardText: '+3 starting souls' },
-    { id: 'gilded_coast', name: 'Gilded Coast', x: 60, y: 39, tier: 4, foeName: 'Thieves\' guild', foes: ['rogue', 'burglar', 'duelist', 'cartographer'], rule: 'Thieves take 40% more. Kills pay 50% more.', reward: { boss: 'gilded_baron' }, rewardText: 'The Gilded Baron' },
+    { id: 'gilded_coast', name: 'Gilded Coast', x: 60, y: 39, tier: 4, foeName: 'Thieves\' guild', foes: ['rogue', 'burglar', 'duelist', 'cartographer'], rule: 'Thieves take 20% more. Kills pay 50% more.', reward: { boss: 'gilded_baron' }, rewardText: 'The Gilded Baron' },
     { id: 'bonefield', name: 'Bonefield', x: 72, y: 34, tier: 3, foeName: 'Grave wardens', foes: ['gravebinder', 'templar', 'sentinel', 'cleric'], rule: 'Minions cost 30% less. Parties +2.', reward: { minionHp: 0.1 }, rewardText: 'Minions +10% health' },
     { id: 'frostmarch', name: 'Frostmarch', x: 58, y: 30.5, tier: 4, foeName: 'Frost guard', foes: ['frost_warden', 'sentinel', 'monk', 'knight'], rule: 'Frost +30%. Income 10% lower.', reward: { startGold: 150 }, rewardText: '+150 starting gold' },
     { id: 'warlords_road', name: 'Warlord\'s Road', x: 48, y: 28, tier: 4, foeName: 'The warlord\'s army', foes: ['knight', 'ogre', 'duelist', 'sentinel'], rule: 'Every second raid is elite.', reward: { trapDmg: 0.05 }, rewardText: 'Traps +5% damage' },
@@ -14872,13 +14893,28 @@ button { font-family: var(--font-body); color: var(--text); }
   C.status = function (id) { return data().conquest[id] || {}; };
   /* The first region not yet crushed; the last one once all have fallen. */
   C.current = function () {
-    for (var i = 0; i < C.REGIONS.length; i++) if (!C.status(C.REGIONS[i].id).taken) return C.REGIONS[i];
-    return C.REGIONS[C.REGIONS.length - 1];
+    var road = C.road();
+    for (var i = 0; i < road.length; i++) if (!C.status(road[i].id).taken) return road[i];
+    return road[road.length - 1];
   };
+  /* The regions of this run, in order: all eleven, or the three of a short road. */
+  C.road = function () {
+    var j = data().journey, ids = j && Array.isArray(j.road) ? j.road : null;
+    if (!ids) return C.REGIONS;
+    var out = ids.map(function (id) { return BY[id]; }).filter(Boolean);
+    return out.length ? out : C.REGIONS;
+  };
+  C.isShort = function () { var j = data().journey; return !!(j && Array.isArray(j.road)); };
+  C.done = function () { return C.road().every(function (r) { return C.status(r.id).taken; }); };
+  /* A short road: the first region, one from the middle of the map and one from the far end. About an hour. */
+  function shortRoad() {
+    var mid = C.REGIONS.slice(1, 6), late = C.REGIONS.slice(6, 10);
+    return [C.REGIONS[0].id, mid[Math.floor(Math.random() * mid.length)].id, late[Math.floor(Math.random() * late.length)].id];
+  }
   Object.defineProperty(C, 'picked', { get: function () { return C.current().id; } });
   /* A run: one boss for the whole road. A new game starts the road over; what you unlocked along the way stays yours. */
   C.journey = function () { var j = data().journey; return j && j.boss && TT.defs.bosses[j.boss] ? j : null; };
-  C.newJourney = function (bossId) { var d = data(); d.conquest = {}; d.pendingCrush = ''; d.journey = { boss: bossId }; M.save(); };
+  C.newJourney = function (bossId, short) { var d = data(); d.conquest = {}; d.pendingCrush = ''; d.journey = { boss: bossId }; if (short) d.journey.road = shortRoad(); M.save(); };
   C.endJourney = function () { var d = data(); d.journey = null; M.save(); };
   C.taken = function () { return C.REGIONS.filter(function (r) { return C.status(r.id).taken; }); };
 
@@ -14903,29 +14939,22 @@ button { font-family: var(--font-body); color: var(--text); }
     return state;
   }, 21);
 
-  /* New bosses are earned by playing: each time a boss you haven't taken that far reaches the Capital, the next one wakes. */
+  /* New bosses are earned by playing: each wakes the first time any boss of yours reaches a region further down the full road. */
   C.BOSS_ORDER = ['hollow_king', 'mother_of_webs', 'gilded_baron', 'drowned_queen', 'clockwork_warden'];
-  var NTH = ['one boss', 'two different bosses', 'three different bosses', 'four different bosses', 'five different bosses'];
-  C.BOSS_ORDER.forEach(function (id, i) { var b = TT.defs.bosses[id]; if (b) b.unlockText = 'Wakes when you have reached the Capital with ' + NTH[i] + '.'; });
-  function wakeNext() {
-    var d = data();
-    for (var i = 0; i < C.BOSS_ORDER.length; i++) {
-      var id = C.BOSS_ORDER[i];
-      if (!TT.defs.bosses[id] || d.owned['boss:' + id]) continue;
-      d.owned['boss:' + id] = true;
-      return id;
-    }
-    return null;
-  }
+  C.BOSS_AT = { hollow_king: 'iron_deep', mother_of_webs: 'storm_coast', gilded_baron: 'gilded_coast', drowned_queen: 'frostmarch', clockwork_warden: 'capital' };
+  C.BOSS_ORDER.forEach(function (id) { var b = TT.defs.bosses[id], r = BY[C.BOSS_AT[id]]; if (b && r) b.unlockText = 'Wakes when you reach ' + r.name + ' on the full road.'; });
+  function idx(regionId) { for (var i = 0; i < C.REGIONS.length; i++) if (C.REGIONS[i].id === regionId) return i; return -1; }
   TT.events.on('runStart', function (e) {
     var st = e && e.state, j = C.journey(), d = data();
-    if (!st || !st.ext || st.ext.region !== 'capital' || !j || j.boss !== st.bossId) return;
-    if (!d.reachedCapital || typeof d.reachedCapital !== 'object') d.reachedCapital = {};
-    if (d.reachedCapital[st.bossId]) return;
-    d.reachedCapital[st.bossId] = true;
-    var woke = wakeNext();
+    if (!st || !st.ext || !j || j.boss !== st.bossId || C.isShort() || (st.opts && st.opts.noMeta) || (TT.demo && TT.demo.on)) return;
+    var here = idx(st.ext.region), woke = [];
+    C.BOSS_ORDER.forEach(function (id) {
+      if (!TT.defs.bosses[id] || d.owned['boss:' + id] || here < idx(C.BOSS_AT[id])) return;
+      d.owned['boss:' + id] = true; woke.push(id);
+    });
+    if (!woke.length) return;
     M.save();
-    if (woke) { TT.events.emit('bossWoken', { id: woke }); TT.events.emit('unlocksChanged', { key: 'boss:' + woke }); }
+    woke.forEach(function (id) { TT.events.emit('bossWoken', { id: id }); TT.events.emit('unlocksChanged', { key: 'boss:' + id }); });
   });
 
   function rewards() {
@@ -14992,7 +15021,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (ctx.kind === 'dig' && C.treeHas(ctx.state, 'tunnel_lord')) mul *= 0.7;
     return mul === 1 ? c : { gold: Math.max(1, Math.round(c.gold * mul)), souls: c.souls };
   }, 42);
-  TT.addFilter('grabAmount', function (amt, ctx) { return rid(ctx.state) === 'gilded_coast' ? Math.round(amt * 1.4) : capital(ctx.state) ? Math.round(amt * 1.15) : amt; }, 33);
+  TT.addFilter('grabAmount', function (amt, ctx) { return rid(ctx.state) === 'gilded_coast' ? Math.round(amt * 1.2) : capital(ctx.state) ? Math.round(amt * 1.15) : amt; }, 33);
   TT.addFilter('heroLoot', function (loot, ctx) {
     if (rid(ctx.state) === 'gilded_coast') loot.gold = Math.round(loot.gold * 1.5);
     return loot;
@@ -15779,20 +15808,27 @@ button { font-family: var(--font-body); color: var(--text); }
 (function (TT) {
   'use strict';
   var H = TT.hooks, D = TT.difficulty = {};
+  var GENTLE_HOARD = 500;   // a deeper hoard forgives more mistakes
   D.LEVELS = [
-    { id: 'gentle', name: 'Gentle', desc: 'Fewer, weaker heroes and more gold. For a first reign. Scores count half.' },
+    { id: 'gentle', name: 'Gentle', desc: 'Fewer, weaker heroes, more gold and a deeper hoard. Once per region, a buried cache saves an empty hoard. Scores count half.' },
     { id: 'normal', name: 'Normal', desc: 'The real thing. Straight tunnels lose.' }
   ];
   D.get = function (state) { return (state && state.ext && state.ext.difficulty) || 'normal'; };
   D.gentle = function (state) { return D.get(state) === 'gentle'; };
-  D.chosen = function () { var d = TT.meta && TT.meta.data; return d && d.difficulty === 'gentle' ? 'gentle' : 'normal'; };
+  /* A first-time player starts on Gentle. Anyone who has played before keeps Normal until they choose. */
+  D.chosen = function () {
+    var d = TT.meta && TT.meta.data;
+    if (!d) return 'normal';
+    if (d.difficulty === 'gentle' || d.difficulty === 'normal') return d.difficulty;
+    return d.runs > 0 ? 'normal' : 'gentle';
+  };
   D.choose = function (id) { if (TT.meta && TT.meta.data) { TT.meta.data.difficulty = id === 'gentle' ? 'gentle' : 'normal'; if (TT.meta.save) TT.meta.save(); } };
 
   TT.addFilter('newRun', function (state, ctx) {
     var o = (ctx && ctx.opts) || {};
     state.ext = state.ext || {};
     state.ext.difficulty = o.difficulty === 'gentle' ? 'gentle' : 'normal';
-    if (state.ext.difficulty === 'gentle') state.gold += 200;
+    if (state.ext.difficulty === 'gentle') { state.gold += 200; state.hoard += GENTLE_HOARD; state.startHoard += GENTLE_HOARD; }
     return state;
   }, 5);
   var baseParty = H.partySize;
@@ -15810,6 +15846,125 @@ button { font-family: var(--font-body); color: var(--text); }
     return inc;
   }, 6);
   TT.events.on('runLoaded', function (e) { if (e && e.state) { e.state.ext = e.state.ext || {}; if (!e.state.ext.difficulty) e.state.ext.difficulty = 'normal'; } });
+})(window.TT);
+
+</script>
+<script>/* src/systems/school.js */
+/*
+ * Tiny Tyrant — src/systems/school.js
+ * The slow boil: a new player's first region shows almost nothing and adds one thing a night.
+ *   night 1  Spike Pit and Start Raid, on the tunnel as it comes
+ *   night 2  Flame Vent, and Dig
+ *   night 3  Poison Gas (the first combo), and Sell
+ *   night 4  rooms, torches, and the boss's spells
+ *   night 5  the nightly trap card, the trap tabs, souls, the scout's note, the trap limit
+ *   night 6  everything: Combos, Stash, Cells, Wrath
+ * The first raids are small. It ends with the region, won or lost, and never comes back unless asked for
+ * (How to Play > Replay Tutorial). Anyone who has played before never sees it.
+ * Kept in state.ext.school (true while it lasts) and TT.meta.data.schooled.
+ * TT.school API: on(state), stage(state) -> 1..6 (6 = nothing hidden), flat(state) -> the trap bar shows every known trap in one row
+ */
+(function (TT) {
+  'use strict';
+  var S = TT.school = {}, M = TT.meta, H = TT.hooks;
+  var FULL = 6;
+  var GRANT = { 1: ['spike_pit'], 2: ['flame_vent'], 3: ['poison_gas'] };   // what each night adds to the book
+
+  S.on = function (state) { return !!(state && state.ext && state.ext.school); };
+  S.stage = function (state) { return S.on(state) ? Math.min(FULL, state.raidNum || 1) : FULL; };
+  S.flat = function (state) { return S.stage(state) < 5; };
+  /* Does this player still need it? */
+  S.wanted = function () {
+    var d = M && M.data;
+    if (!d) return false;
+    if (d.schooled === false) return true;                       // asked for again
+    return d.schooled == null && !(d.runs > 0) && d.tutorial !== 'done';
+  };
+
+  function book(state) {
+    var b = state.ext.trapbook, st = S.stage(state);
+    if (!b) return;
+    if (st >= 5) {
+      // the rest of the first book arrives together, with the boss's own trap
+      if (b.schoolHeld) { Object.keys(b.schoolHeld).forEach(function (id) { b.known[id] = true; }); b.schoolHeld = null; }
+      return;
+    }
+    if (!b.schoolHeld) { b.schoolHeld = b.known; b.known = {}; }
+    for (var n = 1; n <= st; n++) (GRANT[n] || []).forEach(function (id) { if (TT.defs.traps[id]) b.known[id] = true; });
+    b.offer = null;   // no card to choose yet
+  }
+
+  TT.addFilter('newRun', function (state, ctx) {
+    var o = (ctx && ctx.opts) || {};
+    // bots and tools play the real game unless they ask for the lesson
+    var want = o.school != null ? !!o.school : (typeof document !== 'undefined' && !o.noMeta && S.wanted());
+    if (!want || (o.region && o.region !== 'barrow_downs')) return state;
+    state.ext = state.ext || {};
+    state.ext.school = true;
+    book(state);
+    return state;
+  }, 60);
+  TT.events.on('phaseChange', function (e) {
+    var st = e && e.state;
+    if (!S.on(st) || e.to !== 'build') return;
+    book(st);
+    TT.events.emit('unlocksChanged', { key: 'school' });
+  });
+  TT.events.on('runLoaded', function (e) { if (e && S.on(e.state)) book(e.state); });
+
+  /* The first raids are small: two, two, three, three. */
+  var baseParty = H.partySize;
+  H.partySize = function (state) {
+    var n = baseParty(state);
+    if (!S.on(state)) return n;
+    var r = state.raidNum || 1;
+    return r <= 2 ? Math.min(n, 2) : r <= 4 ? Math.min(n, 3) : r === 5 ? Math.min(n, 4) : r === 6 ? Math.min(n, 5) : n;
+  };
+
+  /* Wrath waits until it has been shown (night 6): a perfect start must not quietly make the lesson harder. */
+  TT.events.on('raidEnd', function (e) {
+    var st = e && e.state, g = st && st.ext && st.ext.glory;
+    if (S.on(st) && g && st.raidNum < 6) { g.wrath = 0; if (e.report) e.report.wrathAfter = 0; }
+  });
+
+  /* School ends with the region. */
+  TT.events.on('runEnd', function (e) {
+    var st = e && e.state;
+    if (!S.on(st) || !M || !M.data) return;
+    M.data.schooled = true;
+    if (M.save) M.save();
+  });
+
+  /* ------------------------------------------------------------------ the screen: hide what has not been taught */
+  if (typeof document === 'undefined') return;
+  var CSS = [
+    // night 1: a trap, the gold, the hoard and Start Raid
+    '.sch-1 .tb-left,.sch-1 .tb-sep,.sch-1 .hud-reset{display:none!important}',
+    // night 2: Dig
+    '.sch-2 .tb-shape>*:nth-child(n+2){display:none!important}',
+    // night 3: Sell
+    '.sch-3 .tb-shape>*:nth-child(n+3){display:none!important}',
+    // until night 4: no spells
+    '.sch-1 #hud-boss .spells,.sch-2 #hud-boss .spells,.sch-3 #hud-boss .spells{display:none!important}',
+    // until night 5: no tabs, no souls, no trap limit, no scout note
+    '.sch-lt5 .tb-main>.tb-tabs,.sch-lt5 .res.souls,.sch-lt5 .res.traps,.sch-lt5 #tt-scout,.sch-lt5 #tt-band,.sch-lt5 #hud-log{display:none!important}',
+    // until night 6: no Combos, Stash, Cells or Wrath
+    '.sch-lt6 .tb-extra,.sch-lt6 .res.wrath{display:none!important}',
+    '.sch-lt5 .tb-grid{min-height:0!important}'
+  ].join('');
+  var last = '';
+  function sync() {
+    var st = TT.state, n = S.on(st) ? S.stage(st) : FULL, root = document.body;
+    var cls = n >= FULL ? '' : 'sch-' + n + (n < 5 ? ' sch-lt5' : '') + ' sch-lt6';
+    if (cls === last) return;
+    (last ? last.split(' ') : []).forEach(function (c) { root.classList.remove(c); });
+    (cls ? cls.split(' ') : []).forEach(function (c) { root.classList.add(c); });
+    last = cls;
+  }
+  TT.events.on('uiReady', function () {
+    var s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
+    setInterval(sync, 200);
+  });
 })(window.TT);
 
 </script>
@@ -25402,7 +25557,8 @@ button { font-family: var(--font-body); color: var(--text); }
         makeButton(row, { type: 'minion', id: d.id, key: n <= 9 ? String(n) : null }, 'minion_' + d.id, d.name); n++;
       });
     } else {
-      knownTraps(tab).forEach(function (d) {
+      var flat = TT.school && TT.school.flat(TT.state);
+      (flat ? TT.list('traps', function (d) { return !d.hidden && !d.building && TT.hooks.isUnlocked('traps', d, TT.state); }) : knownTraps(tab)).forEach(function (d) {
         makeButton(row, { type: 'trap', id: d.id, key: n <= 9 ? String(n) : null }, 'trap_' + d.id, d.name + TT.trapbook.numeral(TT.trapbook.level(TT.state, d.id))); n++;
       });
       if (n === 1) ui.el('div', 'tb-none', 'None learned yet', row);
@@ -26652,6 +26808,19 @@ button { font-family: var(--font-body); color: var(--text); }
       ui().tip(b, function () { return '<h4>' + esc(l.name) + '</h4><div class="desc">' + esc(l.desc) + '</div>'; });
     });
   }
+  /* The whole road, or a short one of three regions. Remembered. */
+  function roadShort() { return !!(M() && M().data.roadShort); }
+  function roadRow(parent, rerender) {
+    if (TT.demo && TT.demo.on) return;
+    var box = el('div', 'mt-asc', null, parent);
+    el('span', 'lbl', 'Road', box);
+    [[false, 'Full', 'All 11 regions. New bosses wake along the way.'], [true, 'Short', 'Three regions, about an hour. Bosses do not wake on a short road.']].forEach(function (o) {
+      var b = el('button', 'tt-btn' + (roadShort() === o[0] ? ' primary' : ''), o[1], box);
+      b.addEventListener('click', function () { ui().click(); M().data.roadShort = o[0]; M().save(); rerender(); });
+      ui().tip(b, function () { return '<h4>' + o[1] + ' road</h4><div class="desc">' + o[2] + '</div>'; });
+    });
+  }
+  TT.events.on('buriedCache', function (e) { if (e && e.state === TT.state) ui().toast('The hoard ran dry. A buried cache saves you: 300 gold. Once only.', 'big', 5000); });
   function boonsRow(parent, rerender) {
     var box = el('div', 'mt-boons', null, parent);
     var owned = M() ? M().PERKS.filter(function (p) { return M().owns('perk:' + p.id); }) : [];
@@ -26719,6 +26888,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (sb && PLAY[sb.id]) el('div', 'tt-play', esc(PLAY[sb.id][0]) + '<small>' + esc(PLAY[sb.id][1]) + '</small>', left);
     if (sb) bossTrack(left, sb.id);
     difficultyRow(left, rerender);
+    roadRow(left, rerender);
     boonsRow(left, rerender);
     if (sb) ascensionRow(left, sb.id, rerender);
     var right = el('div', 'row', null, bar);
@@ -26733,7 +26903,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (!b || !bossUnlocked(b)) return;
     stopAnim();
     // choosing a boss starts a new run: the road begins again at the first region, with this boss all the way
-    TT.conquest.newJourney(id);
+    TT.conquest.newJourney(id, roadShort());
     if (TT.save && TT.save.clear) TT.save.clear();
     TT.main.startNewRun(id, null, { ascension: TT.ascension && ascensionOpen() ? TT.ascension.lastPicked(id) : 0, region: TT.conquest.picked });
   }
@@ -28775,12 +28945,22 @@ button { font-family: var(--font-body); color: var(--text); }
     hidden_works: 'Paint the trap the colour of the floor.',
     reapers: 'Waste not.',
     frenzy: 'Do not feed them before a raid.',
-    ruinous_works: 'Expensive. Worth it.',
-    cheap_labor: 'You get what you pay for. So do they.',
-    elite_guard: 'Fewer, but better.',
+    ruinous_works: 'Built to hurt.',
+    cheap_labor: 'Goblins work for scraps.',
+    elite_guard: 'Hand-picked from the worst.',
     soulless: 'They do not miss what they never had.',
     devils_bargain: 'Sign here. And here. And here.',
-    iron_master: 'Spend less on gold. Spend more on you.'
+    iron_master: 'Harder to kill than a bad idea.',
+    whetstones: 'Sharper is a kind of honesty.',
+    second_vault: 'Nobody checks under the cellar.',
+    oiled_gears: 'Quiet. Quick. Again.',
+    fat_purse: 'Old money. Very old.',
+    grave_tithe: 'The dead pay rent.',
+    iron_bones: 'They break last.',
+    black_ledger: 'Every debt is written down.',
+    dark_tongue: 'Words best left unsaid, said faster.',
+    tyrants_due: 'Small crown. Long shadow.',
+    bottomless: 'Drop a coin. Listen. Keep listening.'
   };
   var ART = {
     serrated: 'trap_spike_pit', deep_vault: 'icon_hoard', thick_hides: 'minion_skeleton', war_chest: 'icon_gold', soul_jar: 'icon_soul',
@@ -28788,7 +28968,9 @@ button { font-family: var(--font-body); color: var(--text); }
     chain_reaction: 'trap_poison_gas', blood_money: 'trap_bounty_board', old_guard: 'minion_goblin',
     cheap_bones: 'minion_skeleton', night_tithe: 'icon_soul', terror: 'trap_dread_lantern', hidden_works: 'trap_mimic_chest', reapers: 'icon_soul',
     frenzy: 'minion_ghoul', ruinous_works: 'trap_grinding_walls', cheap_labor: 'trap_tar_pit', elite_guard: 'minion_hollow_vassal', soulless: 'minion_skeleton',
-    devils_bargain: 'icon_gold', iron_master: 'icon_hoard'
+    devils_bargain: 'icon_gold', iron_master: 'icon_hoard',
+    whetstones: 'trap_pendulum_blade', second_vault: 'icon_hoard', oiled_gears: 'trap_grinding_walls', fat_purse: 'icon_gold', grave_tithe: 'icon_soul',
+    iron_bones: 'minion_skeleton', black_ledger: 'icon_gold', dark_tongue: 'spell_soul_bolt', tyrants_due: 'boss_lich', bottomless: 'treasure'
   };
 
   /* The back of every card: a crown over crossed bones, cut into black. */
@@ -29476,7 +29658,7 @@ button { font-family: var(--font-body); color: var(--text); }
     render: function (el, p, a) {
       el.classList.add('cq-scr');
       var map = ui.el('div', 'cq-map', null, el), d = TT.meta.data, pending = C.region(d.pendingCrush);
-      var cur = C.current(), allDone = C.taken().length >= C.REGIONS.length;
+      var cur = C.current(), allDone = C.done ? C.done() : C.taken().length >= C.REGIONS.length;
       // the region falling now still stands until the animation hits it
       var pid = pending ? pending.id : null;
       map.tt = TT.worldMap.mount(map, C.REGIONS, function (id) {
@@ -29851,6 +30033,8 @@ button { font-family: var(--font-body); color: var(--text); }
     if (document.getElementById('tt-evo') || document.getElementById('tt-intro') || document.querySelector('#tt-book:not(.hidden)')) return;
     var paid = C.sweep(st);
     if (paid) { ui.toast('That class has no more to tell you. Ransomed: +' + paid + ' gold', 'good', 3000); saved(st); }
+    // a new player's first nights: captives are ransomed quietly until the Cells are introduced (src/systems/school.js)
+    if (C.waiting(st) && TT.school && TT.school.stage(st) < 6) { C.auto(st); ui.toast('A hero was taken alive and ransomed for gold.', 'good', 3000); saved(st); return; }
     if (C.waiting(st)) open(st);
   }
   TT.events.on('uiReady', function () {
@@ -30424,6 +30608,7 @@ button { font-family: var(--font-body); color: var(--text); }
   ];
 
   /* ------------------------------------------------------------------ the viewer */
+  var LIMIT = 0;   // how many scenes this showing has
   var root = null, raf = 0, page = 0, t0 = 0, done = null, cv = null, ctx = null, cap = null, dots = [], prev = null, next = null;
   function frame(now) {
     if (!root) return;
@@ -30435,12 +30620,12 @@ button { font-family: var(--font-body); color: var(--text); }
     raf = requestAnimationFrame(frame);
   }
   function go(n) {
-    page = clamp(n, 0, SCENES.length - 1); t0 = performance.now();
+    page = clamp(n, 0, LIMIT - 1); t0 = performance.now();
     cap.textContent = SCENES[page].cap;
     dots.forEach(function (d, i) { d.classList.toggle('on', i === page); });
     prev.disabled = page === 0;
-    next.textContent = page === SCENES.length - 1 ? 'Play!' : '▶';
-    next.classList.toggle('go', page === SCENES.length - 1);
+    next.textContent = page === LIMIT - 1 ? 'Play!' : '▶';
+    next.classList.toggle('go', page === LIMIT - 1);
   }
   function close() {
     if (!root) return;
@@ -30451,7 +30636,7 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   function key(e) {
     if (!root) return;
-    if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (page === SCENES.length - 1) close(); else go(page + 1); }
+    if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (page === LIMIT - 1) close(); else go(page + 1); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); go(page - 1); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
   }
@@ -30462,8 +30647,9 @@ button { font-family: var(--font-body); color: var(--text); }
     isOpen: function () { return !!root; },
     go: function (n) { if (root) go(n); },
     paint: function (t) { if (!root) return; TT.guide.freeze = t; cancelAnimationFrame(raf); frame(performance.now()); },
-    show: function (onDone) {
+    show: function (onDone, count) {
       if (root) return;
+      LIMIT = Math.max(1, Math.min(SCENES.length, count || SCENES.length));
       if (!styled) { var st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st); styled = true; }
       done = onDone || null;
       root = document.createElement('div'); root.id = 'tt-guide';
@@ -30472,12 +30658,12 @@ button { font-family: var(--font-body); color: var(--text); }
       cv = document.createElement('canvas');
       var dpr = Math.min(2, window.devicePixelRatio || 1); cv.width = W * dpr; cv.height = H * dpr;
       root.appendChild(cv); ctx = cv.getContext('2d');
-      var dr = ui.el('div', 'dots', null, root); dots = SCENES.map(function () { return ui.el('div', 'dot', null, dr); });
+      var dr = ui.el('div', 'dots', null, root); dots = SCENES.slice(0, LIMIT).map(function () { return ui.el('div', 'dot', null, dr); });
       var nav = ui.el('div', 'nav', null, root);
       prev = ui.el('button', null, '◀', nav); next = ui.el('button', null, '▶', nav);
       prev.addEventListener('click', function () { ui.click(); go(page - 1); });
-      next.addEventListener('click', function () { ui.click(); if (page === SCENES.length - 1) close(); else go(page + 1); });
-      cv.addEventListener('click', function () { ui.click(); if (page === SCENES.length - 1) close(); else go(page + 1); });
+      next.addEventListener('click', function () { ui.click(); if (page === LIMIT - 1) close(); else go(page + 1); });
+      cv.addEventListener('click', function () { ui.click(); if (page === LIMIT - 1) close(); else go(page + 1); });
       var sk = ui.el('button', 'skip', 'Skip', root);
       sk.addEventListener('click', function () { ui.click(); close(); });
       document.addEventListener('keydown', key, true);
@@ -30558,6 +30744,46 @@ button { font-family: var(--font-body); color: var(--text); }
     { icons: ['spell'], text: 'Tap a spell, then tap a hero', point: function () { return document.querySelector('.spells .spell'); }, done: function () { return cast; }, button: 'Got it', raid: true }
   ];
 
+  /* The slow boil (src/systems/school.js): each night teaches the one thing it adds. */
+  function startBtn() { return document.querySelector('#hud-top .primary') || document.getElementById('hudbtn-start'); }
+  var GO = { icons: ['icon_raid'], text: 'Start the raid!', point: startBtn, done: function () { return st().phase === 'raid'; } };
+  var NIGHTS = {
+    1: [{ icons: ['trap_spike_pit'], text: 'Put 3 Spike Pits on the path', point: function () { return toolByName('Spike Pit'); }, done: function () { return built('spike_pit') >= 3; },
+         spots: function () { return [onPath('spike_pit', 0.25), onPath('spike_pit', 0.5), onPath('spike_pit', 0.72)]; } }, GO],
+    2: [{ icons: ['trap_flame_vent'], text: 'New trap! Place a Flame Vent', point: function () { return toolByName('Flame Vent'); }, done: function () { return built('flame_vent') > 0; },
+         spots: function () { return [onPath('flame_vent', 0.4)]; } },
+        { icons: ['icon_dig'], text: 'New: Dig. Drag to carve rock', point: function () { return toolByName('Dig'); }, done: function () { return dug() > startDug; } }, GO],
+    3: [{ icons: ['trap_poison_gas', '+', 'trap_flame_vent'], text: 'Gas + fire = boom. Put Gas by a Flame Vent', point: function () { return toolByName('Poison Gas'); }, done: function () { return built('poison_gas') > 0; },
+         spots: function () { var v = st().traps.filter(function (t) { return t.id === 'flame_vent'; })[0]; return [v ? near(v, 'poison_gas') : onPath('poison_gas', 0.5)]; } }, GO],
+    4: [{ icons: ['icon_dig'], text: 'Dig a big room. Traps hit harder there', point: function () { return toolByName('Dig'); }, done: function () { return TT.rooms.count(st()) > 0; }, room: function () { return onPath(null, 0.6); } }, GO,
+        { icons: ['spell'], text: 'New: spells. Tap one, then tap a hero', point: function () { return document.querySelector('.spells .spell'); }, done: function () { return cast; }, button: 'Got it', raid: true }],
+    5: [{ icons: ['trap_arrow_slit'], text: 'More traps now, in tabs. Pick a new one each night', point: function () { return document.querySelector('#toolbar .tb-main .tb-tabs'); }, button: 'Got it' }],
+    6: [{ icons: ['icon_hoard'], text: 'Last bits: Combos, Stash and Cells. You know it all now!', point: function () { return document.querySelector('#toolbar .tb-extra'); }, button: 'Got it' }]
+  };
+  var night = 0, nightStep = 0;
+  function schoolSync(state) {
+    if (blocked()) { box.classList.add('hidden'); unlight(); return; }
+    if (!guided && !data().guided && TT.guide) {
+      guided = true; box.classList.add('hidden'); unlight();
+      TT.guide.show(function () { data().guided = true; M.save(); }, 2);   // only: heroes come for the gold, traps stop them
+      return;
+    }
+    if (night !== state.raidNum) { night = state.raidNum; nightStep = 0; startDug = dug(); cast = false; stepNo = -1; }
+    var list = NIGHTS[night] || [], s0 = list[nightStep];
+    while (s0 && s0.done && s0.done()) { nightStep++; stepNo = -1; if (s0 === GO) break; s0 = list[nightStep]; }
+    s0 = list[nightStep];
+    if (s0 && !s0.raid && state.phase !== 'build') { nightStep = list.length; s0 = null; }   // the raid began: the night's building lesson is over
+    if (s0 && s0.raid && state.phase !== 'raid') s0 = null;
+    if (!s0) { box.classList.add('hidden'); unlight(); if (night >= 6 && nightStep >= list.length) finish(); return; }
+    if (stepNo !== nightStep) {
+      stepNo = nightStep;
+      renderStep(s0, 'Night ' + night, function () { nightStep++; stepNo = -1; });
+    }
+    box.classList.remove('hidden');
+    unlight();
+    if (s0.point) light(s0.point());
+  }
+
   /* ------------------------------------------------------------------ where to build: glowing spots on the map */
   var pathMemo = { rev: -1, path: [] };
   function route() {
@@ -30582,9 +30808,10 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   var hintMemo = { key: '', spots: [], room: null };
   function hints() {
-    var s = stepNo >= 0 && STEPS[stepNo], state = st();
+    var state = st();
+    var s = stepNo >= 0 && (TT.school && TT.school.on(state) ? (NIGHTS[night] || [])[nightStep] : STEPS[stepNo]);
     if (!s || !state || state.phase !== 'build' || !box || box.classList.contains('hidden') || tipOn) return null;
-    var k = stepNo + ':' + state.grid.rev + ':' + state.traps.length;
+    var k = night + ':' + stepNo + ':' + state.grid.rev + ':' + state.traps.length;
     if (hintMemo.key !== k) hintMemo = { key: k, spots: s.spots ? s.spots().filter(Boolean) : [], room: s.room ? s.room() : null };
     return hintMemo;
   }
@@ -30636,7 +30863,8 @@ button { font-family: var(--font-body); color: var(--text); }
     unlight();
     if (box) box.classList.add('hidden');
   }
-  function render(s) {
+  function render(s) { renderStep(s, (stepNo + 1) + ' / ' + STEPS.length, advance, true); }
+  function renderStep(s, label, onButton, canSkip) {
     box.innerHTML = '';
     box.classList.add('step');
     var ic = ui.el('div', 'ic', null, box);
@@ -30645,13 +30873,15 @@ button { font-family: var(--font-body); color: var(--text); }
       if (k === 'spell') { var sp = TT.state && TT.defs.bosses[TT.state.bossId] && TT.defs.bosses[TT.state.bossId].spells; k = sp && sp[0] ? 'spell_' + sp[0].id : 'icon_soul'; }
       try { ic.appendChild(TT.sprites.icon(k, 88)); } catch (e) { /* no art */ }
     });
-    ui.el('div', 'tx', '<span class="n">' + (stepNo + 1) + ' / ' + STEPS.length + '</span>' + ui.esc(s.text), box);
+    ui.el('div', 'tx', '<span class="n">' + ui.esc(label) + '</span>' + ui.esc(s.text), box);
     if (s.button) {
       var b = ui.el('button', 'go', ui.esc(s.button), box);
-      b.addEventListener('click', function () { ui.click(); advance(); });
+      b.addEventListener('click', function () { ui.click(); onButton(); });
     }
-    var skip = ui.el('button', null, 'Skip', box);
-    skip.addEventListener('click', function () { ui.click(); finish(); });
+    if (canSkip) {
+      var skip = ui.el('button', null, 'Skip', box);
+      skip.addEventListener('click', function () { ui.click(); finish(); });
+    }
     box.classList.remove('hidden');
   }
   function advance() {
@@ -30667,6 +30897,7 @@ button { font-family: var(--font-body); color: var(--text); }
     if (box && tipOn && blocked()) { clearTimeout(tipTimer); tipOn = false; box.classList.add('hidden'); }
     if (!box || tipOn) return;
     var state = st();
+    if (state && ui.hud.visible && TT.school && TT.school.on(state) && !state.outcome) { schoolSync(state); return; }
     if (!state || !ui.hud.visible || isDone()) { if (!tipOn) box.classList.add('hidden'); unlight(); return; }
     if (state.raidNum > 1) { finish(); return; }
     if (blocked()) { box.classList.add('hidden'); unlight(); return; }
@@ -30686,14 +30917,14 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   TT.tutorial = {
     firstNight: function (st) { return !isDone() && st.raidNum === 1; },
-    restart: function () { data().tutorial = 'again'; data().tips = {}; data().guided = false; stepNo = -1; M.save(); }
+    restart: function () { data().tutorial = 'again'; data().tips = {}; data().guided = false; data().schooled = false; night = 0; stepNo = -1; M.save(); }
   };
   /* The first night has no card to choose: the lesson comes first, and the choices start on night two. */
-  TT.events.on('runStart', function () { stepNo = -1; guided = false; cast = false; });
+  TT.events.on('runStart', function () { stepNo = -1; guided = false; cast = false; night = 0; nightStep = 0; });
 
   /* ------------------------------------------------------------------ one-time tips */
   function tip(id, text) {
-    if (!box || tips()[id] || !isDone() || tipOn || blocked() || !ui.hud.visible) return;
+    if (!box || tips()[id] || !isDone() || tipOn || blocked() || !ui.hud.visible || (TT.school && TT.school.on(st()))) return;
     tips()[id] = true;
     M.save();
     tipOn = true;
@@ -33473,7 +33704,9 @@ button { font-family: var(--font-body); color: var(--text); }
   'use strict';
   if (typeof document === 'undefined' || (TT.demo && TT.demo.on)) return; // never in the free demo: it would open the whole game
   var ui = TT.ui, KEY = 'tinytyrant.dev', box = null, tab = 'levels';
-  function unlocked() { try { return window.localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
+  /* Not in the packaged desktop game and not in the demo: it skips regions, which would hand out bosses and achievements. */
+  function allowed() { return !(TT.demo && TT.demo.on) && (!window.ttDesktop || !!window.ttDesktop.dev); }
+  function unlocked() { if (!allowed()) return false; try { return window.localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
   function unlock() { try { window.localStorage.setItem(KEY, '1'); } catch (e) { /* fine */ } }
 
   var CSS = [
@@ -33702,7 +33935,7 @@ button { font-family: var(--font-body); color: var(--text); }
   }
   ui.devRoom = { open: open, close: close, unlocked: unlocked };
   window.addEventListener('keydown', function (e) {
-    if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) { e.preventDefault(); if (box) close(); else open(); }
+    if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd') && allowed()) { e.preventDefault(); if (box) close(); else open(); }
     else if (e.key === 'Escape' && box) { e.stopPropagation(); close(); }
   }, true);
 })(window.TT);
@@ -34056,7 +34289,10 @@ button { font-family: var(--font-body); color: var(--text); }
     });
     return best;
   }
-  function inGame() { return !!TT.state && !ui.screens.isOpen(); }
+  /* A card that wants an answer (a trap to learn, an evolution, the cells, the picture guide, a region's intro) owns the keyboard:
+     Enter must not start the raid underneath it. */
+  function cardOpen() { return !!document.querySelector('#tt-book:not(.hidden), #tt-evo, #tt-cells, #tt-guide, #tt-intro'); }
+  function inGame() { return !!TT.state && !ui.screens.isOpen() && !cardOpen(); }
 
   function setHover(sx, sy) {
     var st = TT.state;
